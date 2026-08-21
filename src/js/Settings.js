@@ -414,10 +414,17 @@ function birthdayCardNode(birthday) {
 
     card.addEventListener("focusout", () => {
         setTimeout(() => {
-            if (pristine.birthdayId !== birthday.id) return;
             if (card.contains(document.activeElement)) return;
             if (clickStartedInside(card)) return;
-            discardPristineBirthday();
+
+            if (pristine.birthdayId === birthday.id) discardPristineBirthday();
+
+            // Sobreviveu ao descarte (ou nem era candidato): recolhe, como os
+            // cards do widget. Se foi descartado, o board já foi remontado.
+            if (birthdays.some(b => b.id === birthday.id)) {
+                card.classList.remove("expanded");
+                bdayExpanded.delete(birthday.id);
+            }
         }, 0);
     });
 
