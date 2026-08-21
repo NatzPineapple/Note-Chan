@@ -419,8 +419,6 @@ function birthdayCardNode(birthday) {
 
             if (pristine.birthdayId === birthday.id) discardPristineBirthday();
 
-            // Sobreviveu ao descarte (ou nem era candidato): recolhe, como os
-            // cards do widget. Se foi descartado, o board já foi remontado.
             if (birthdays.some(b => b.id === birthday.id)) {
                 card.classList.remove("expanded");
                 bdayExpanded.delete(birthday.id);
@@ -433,8 +431,6 @@ function birthdayCardNode(birthday) {
         card.classList.toggle("expanded");
         if (card.classList.contains("expanded")) {
             bdayExpanded.add(birthday.id);
-            // Sem foco dentro, o focusout abaixo nunca dispara e o card nunca
-            // recolhe. É o que o expand(true) faz no widget (attachHeaderToggle).
             card.querySelector(".bd-date")?.focus();
         } else {
             bdayExpanded.delete(birthday.id);

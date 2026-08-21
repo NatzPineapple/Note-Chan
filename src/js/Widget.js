@@ -1300,8 +1300,6 @@ function cycleTab(delta) {
 }
 
 document.addEventListener("keydown", (e) => {
-    // Na bandeja só a barra de título existe: busca, cronômetro e board estão
-    // com display:none, e o Esc caía no close-widget, que ali esconde a janela.
     if (container.classList.contains("collapsed")) return;
 
     if (e.key === "Escape") {
