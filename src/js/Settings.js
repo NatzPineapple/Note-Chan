@@ -431,8 +431,14 @@ function birthdayCardNode(birthday) {
     card.querySelector(".card-header").addEventListener("click", (e) => {
         if (e.detail > 1) return; 
         card.classList.toggle("expanded");
-        if (card.classList.contains("expanded")) bdayExpanded.add(birthday.id);
-        else bdayExpanded.delete(birthday.id);
+        if (card.classList.contains("expanded")) {
+            bdayExpanded.add(birthday.id);
+            // Sem foco dentro, o focusout abaixo nunca dispara e o card nunca
+            // recolhe. É o que o expand(true) faz no widget (attachHeaderToggle).
+            card.querySelector(".bd-date")?.focus();
+        } else {
+            bdayExpanded.delete(birthday.id);
+        }
     });
 
     const title = card.querySelector(".card-title");
