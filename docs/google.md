@@ -8,6 +8,18 @@ o que está desenhado mas ainda não existe.
 > estão fechadas, mas nada dela foi implementado. Não confunda as duas ao
 > planejar trabalho.
 
+### Onde fica o código
+
+O processo principal e a tela rodam isolados e conversam por IPC, então a
+integração fica em dois lugares:
+
+| Arquivo | Processo | Papel |
+|---|---|---|
+| `src/js/main/google/GoogleAuth.js` | principal | Login OAuth e guarda do token |
+| `src/js/main/google/GoogleCalendarSync.js` | principal | Sincronização com o Google Agenda |
+| `src/js/main/google/GoogleIpc.js` | principal | Atende os botões da tela e roda a sincronização periódica (15 min) |
+| `src/js/settings/GoogleSettings.js` | tela de configurações | Botões Conectar / Sincronizar agora / Desconectar |
+
 ---
 
 ## 1. Conexão com a conta (`GoogleAuth.js`)
@@ -58,7 +70,7 @@ não guarde mais nada.
 
 ### Configuração
 
-As credenciais ficam em `src/js/GoogleAuthConfig.js`, que é **gitignored**.
+As credenciais ficam em `src/js/main/google/GoogleAuthConfig.js`, que é **gitignored**.
 Um clone novo precisa criar o arquivo a partir de `GoogleAuthConfig.example.js`
 (ver README → Sincronização com o Google Agenda). Sem ele, a funcionalidade
 aparece como "Não configurado" e o resto do app funciona normalmente.

@@ -43,7 +43,8 @@
         higiene: "Só o banho/escovação recupera a higiene."
     };
 
-    function criar({ data, container, estaPronto, aoAbrir }) {
+    function criar({ obterDados, container, estaPronto, aoAbrir }) {
+        const estado = () => obterDados().tamagotchi;
         const spriteSvg = TamaSprite.svg;
         const mood = TamaSprite.mood;
         const clamp = TamaSprite.clamp;
@@ -72,7 +73,7 @@
         /* ─────────────────────────  Estado  ───────────────────────────── */
 
         function aplicarDecaimento() {
-            const tama = data.tamagotchi;
+            const tama = estado();
             const agora = Date.now();
             const antes = tama.vida + tama.fome + tama.carencia + tama.higiene;
 
@@ -112,20 +113,20 @@
 
         function registrarInteracao() {
             const agora = Date.now();
-            data.tamagotchi.lastInteraction = agora;
-            data.tamagotchi.lastCarenciaUpdate = agora;
+            estado().lastInteraction = agora;
+            estado().lastCarenciaUpdate = agora;
         }
 
         function agendarGravacao() {
             if (!estaPronto()) return; 
             clearTimeout(saveTimer);
             saveTimer = setTimeout(() => {
-                window.api.send("save-data", { tamagotchi: data.tamagotchi });
+                window.api.send("save-data", { tamagotchi: estado() });
             }, 400);
         }
 
         function ganharXp(amount) {
-            const tama = data.tamagotchi;
+            const tama = estado();
             tama.xp += amount;
             tama.level = 1 + Math.floor(tama.xp / TAMA_XP_PER_LEVEL);
         }
@@ -133,7 +134,7 @@
         /* ─────────────────────────  Tela  ─────────────────────────────── */
 
         function atualizarUI() {
-            const tama = data.tamagotchi;
+            const tama = estado();
             const svg = spriteSvg(mood(tama));
 
             sprite.innerHTML = svg;
@@ -177,7 +178,7 @@
                     <span class="tama-action-gain">+${action.gain}</span>
                 `;
                 btn.addEventListener("click", () => {
-                    const tama = data.tamagotchi;
+                    const tama = estado();
                     tama[action.stat] = clamp(tama[action.stat] + action.gain);
                     (action.extra || []).forEach(([stat, delta]) => {
                         tama[stat] = clamp(tama[stat] + delta);
@@ -221,7 +222,7 @@
             const agora = Date.now();
             if (agora < petCooldownUntil) return;
             petCooldownUntil = agora + PET_COOLDOWN_MS;
-            data.tamagotchi.carencia = clamp(data.tamagotchi.carencia + 2);
+            estado().carencia = clamp(estado().carencia + 2);
             registrarInteracao();
             tocarAnimacaoNoPalco("tama-anim-pet");
             atualizarUI();
@@ -231,14 +232,14 @@
         /* ─────────────────  Ganchos do resto do widget  ───────────────── */
 
         function aoCompletarTarefa(fomeGain, xpGain) {
-            data.tamagotchi.fome = clamp(data.tamagotchi.fome + fomeGain);
+            estado().fome = clamp(estado().fome + fomeGain);
             ganharXp(xpGain);
             atualizarUI();
             agendarGravacao();
         }
 
         function aoAbrirApp() {
-            data.tamagotchi.carencia = clamp(data.tamagotchi.carencia + 3);
+            estado().carencia = clamp(estado().carencia + 3);
             registrarInteracao();
             agendarGravacao();
         }
@@ -285,5 +286,13 @@
         return { iniciar, abrir, fechar, estaAberto, aoCompletarTarefa, aoAbrirApp };
     }
 
-    return { criar };
+    function desligado() {
+        const nada = () => {};
+        return {
+            iniciar: nada, abrir: nada, fechar: nada, estaAberto: () => false,
+            aoCompletarTarefa: nada, aoAbrirApp: nada
+        };
+    }
+
+    return { criar, desligado };
 });

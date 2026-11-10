@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'none';
+    script-src 'self';
+    style-src 'self' 'unsafe-inline';
+    img-src 'self' data:;
+    font-src 'self';
+  " />
+  <title>Evento rápido</title>
+  <link rel="stylesheet" href="css/Fonts.css" />
+  <link rel="stylesheet" href="css/Theme.css" />
+  <link rel="stylesheet" href="css/quickevent_style.css" />
+</head>
+<body>
+  <div id="qe-container">
+    <div id="qe-title-row">
+      <span id="qe-icon"></span>
+      <input id="qe-title" type="text" placeholder="Novo evento... (Enter salva, Esc cancela)" spellcheck="false" />
+    </div>
+    <div id="qe-fields">
+      <label>Data
+        <input type="date" id="qe-date" />
+      </label>
+      <label>Início
+        <input type="time" id="qe-start" />
+      </label>
+      <label>Fim
+        <input type="time" id="qe-end" />
+      </label>
+      <label>Recorrência
+        <select id="qe-recurrence">
+          <option value="none">Não se repete</option>
+          <option value="daily">Diariamente</option>
+          <option value="weekly">Semanalmente</option>
+          <option value="monthly">Mensalmente</option>
+          <option value="yearly">Anualmente</option>
+        </select>
+      </label>
+    </div>
+  </div>
+  <script src="../js/Logger.js"></script>
+  <script src="../js/RichText.js"></script>
+  <script src="../js/Icons.js"></script>
+  <script src="../js/EventUtils.js"></script>
+  <script src="../js/RichEditor.js"></script>
+  <script src="../js/QuickEvent.js"></script>
+</body>
+</html>

@@ -112,7 +112,6 @@
             }
             await fsp.rename(logFile, archive);
         } catch (e) {
-            // console.error, e não o error() daqui: relatar falha do logger pelo logger recursaria.
             if (e.code !== "ENOENT") console.error("[LOGGER] Falha ao rotacionar log:", e.message);
         }
     }

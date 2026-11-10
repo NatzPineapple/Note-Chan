@@ -7,8 +7,8 @@ const PATHS = require("./Paths");
 const { loadData, saveData, saveDataSync } = require("./DataManager");
 const { log, warn, registrarDeRenderer, capturarFalhasDoProcesso } = require("./Logger");
 const EventUtils = require("./EventUtils");
-const GoogleAuth = require("./GoogleAuth");
-const GoogleCalendarSync = require("./GoogleCalendarSync");
+const GoogleIpc = require("./main/google/GoogleIpc");
+const Features = require("./Features");
 const UpdateChecker = require("./UpdateChecker");
 const RichText = require("./RichText");
 
@@ -31,6 +31,7 @@ let tray               = null;
 let widgetWindow       = null;
 let settingsWindow     = null;
 let quickCaptureWindow = null;
+let quickEventWindow   = null;
 let alarmWindow        = null;
 let saveTimer          = null;
 
@@ -54,7 +55,6 @@ const NOTIFY_GRACE_MS = 15 * 60 * 1000;
 
 const ALARM_SIZE = { width: 340, height: 300 };
 const SNOOZE_MS = 5 * 60 * 1000;
-const GOOGLE_SYNC_INTERVAL_MS = 15 * 60 * 1000;
 
 /* ═════════════════════════════  UTILITÁRIOS  ════════════════════════════ */
 
@@ -134,7 +134,7 @@ function setMode(collapsed) {
 
     if (wasCollapsed && !collapsed) {
         checkNoTimeEventsToday();
-        if (GoogleAuth.isConnected()) runGoogleSync();
+        google.sincronizarSeConectado();
     }
 
     if (!widgetWindow || widgetWindow.isDestroyed()) return;
@@ -179,6 +179,7 @@ ipcMain.on("save-data", (event, payload) => {
         syncNoteWindows();
     }
     data.lists = Array.isArray(payload.lists) ? payload.lists : data.lists;
+    data.habits = Array.isArray(payload.habits) ? payload.habits : data.habits;
     if (Array.isArray(payload.birthdays)) {
         data.birthdays = mergeMainOwnedList(data.birthdays, payload.birthdays, ["googleEventId", "googleSyncedAt"]);
     }
@@ -260,6 +261,37 @@ ipcMain.on("quick-capture-submit", (event, text) => {
 
 ipcMain.on("quick-capture-cancel", () => hideQuickCapture());
 
+const RECURRENCES = new Set(["none", "daily", "weekly", "monthly", "yearly"]);
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const HH_MM = /^\d{2}:\d{2}$/;
+
+ipcMain.on("quick-event-submit", (event, payload) => {
+    hideQuickEvent();
+    const title = String(payload?.title || "").trim().slice(0, 200);
+    if (!title) return;
+
+    const evt = {
+        id: require("crypto").randomUUID(),
+        title,
+        date: ISO_DATE.test(payload.date) ? payload.date : EventUtils.todayISO(),
+        recurrence: RECURRENCES.has(payload.recurrence) ? payload.recurrence : "none",
+        startTime: HH_MM.test(payload.startTime) ? payload.startTime : null,
+        endTime: HH_MM.test(payload.endTime) ? payload.endTime : null,
+        link: null,
+        completedDates: [],
+        items: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+    };
+    data.events.push(evt);
+    log("[QUICK-EVENT] Evento criado:", evt.title, evt.date, evt.startTime || "");
+    debouncedSaveData();
+    widgetWindow?.webContents.send("events-updated", data.events);
+    google.sincronizarSeConectado();
+});
+
+ipcMain.on("quick-event-cancel", () => hideQuickEvent());
+
 ipcMain.on("quit-app", () => { log("[APP] Saída solicitada pelo usuário."); app.quit(); });
 
 ipcMain.on("close-widget", () => {
@@ -306,53 +338,11 @@ ipcMain.on("open-link", (event, url) => abrirNoNavegador(url, "(link de evento)"
 
 /* ═══════════════════════  SINCRONIZAÇÃO COM O GOOGLE  ═════════════════════ */
 
-function pushSyncedDataToRenderers() {
-    widgetWindow?.webContents.send("events-updated", data.events);
-    settingsWindow?.webContents.send("birthdays-updated", data.birthdays);
-}
-
-let syncInFlight = null;
-
-async function doGoogleSync() {
-    const result = await GoogleCalendarSync.runSync(data);
-    if (result.ok) {
-        log("[GOOGLE] Sincronização concluída —", result.count, "eventos processados");
-        debouncedSaveData();
-        pushSyncedDataToRenderers();
-    } else if (result.error !== "not-connected") {
-        warn("[GOOGLE] Sincronização falhou:", result.error);
-    }
-    return result;
-}
-
-function runGoogleSync() {
-    if (syncInFlight) {
-        log("[GOOGLE] Sincronização já em andamento — reaproveitando a atual.");
-        return syncInFlight;
-    }
-    syncInFlight = doGoogleSync().finally(() => { syncInFlight = null; });
-    return syncInFlight;
-}
-
-ipcMain.handle("google-auth-status", () => ({
-    configured: GoogleAuth.isConfigured(),
-    connected: GoogleAuth.isConnected(),
-    email: GoogleAuth.getEmail(),
-    lastSyncAt: data.googleSync.lastSyncAt
-}));
-
-ipcMain.handle("google-auth-start", async () => {
-    const result = await GoogleAuth.startOAuthFlow(); // rejeita a promise no invoke se falhar/cancelar
-    runGoogleSync(); // primeira sincronização logo após conectar, sem esperar o usuário abrir/fechar o widget
-    return { connected: true, email: result.email };
+const google = GoogleIpc.criar({
+    obterDados: () => data,
+    salvar: () => debouncedSaveData(),
+    obterJanelas: () => ({ widget: widgetWindow, settings: settingsWindow })
 });
-
-ipcMain.handle("google-disconnect", async () => {
-    await GoogleAuth.disconnect();
-    return { connected: false };
-});
-
-ipcMain.handle("google-sync-now", () => runGoogleSync());
 
 /* ══════════════════════════  ATUALIZAÇÃO DE VERSÃO  ══════════════════════ */
 
@@ -463,7 +453,7 @@ function quickCreate(type) {
 /* ═════════════════════════════  CONFIGURAÇÕES  ═══════════════════════════ */
 
 function broadcastSettings() {
-    [widgetWindow, settingsWindow, quickCaptureWindow, alarmWindow, ...noteWindows.values()]
+    [widgetWindow, settingsWindow, quickCaptureWindow, quickEventWindow, alarmWindow, ...noteWindows.values()]
         .filter(w => w && !w.isDestroyed())
         .forEach(w => w.webContents.send("apply-settings", data.settings));
 }
@@ -674,6 +664,51 @@ function hideQuickCapture() {
     }
 }
 
+/* ══════════════════════════════  EVENTO RÁPIDO  ══════════════════════════ */
+
+const QUICK_EVENT_SIZE = { width: 480, height: 112 };
+
+function createQuickEventWindow() {
+    quickEventWindow = new BrowserWindow({
+        ...QUICK_EVENT_SIZE,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        resizable: false,
+        movable: false,
+        skipTaskbar: true,
+        show: false,
+        webPreferences: SECURE_PREFS
+    });
+
+    quickEventWindow.setAlwaysOnTop(true, "screen-saver");
+    quickEventWindow.loadFile(path.join(__dirname, "../html/quickevent.html"));
+    quickEventWindow.on("blur", hideQuickEvent);
+    quickEventWindow.on("closed", () => (quickEventWindow = null));
+    log("[WINDOW] evento rápido criado");
+}
+
+function showQuickEvent() {
+    if (!quickEventWindow || quickEventWindow.isDestroyed()) {
+        createQuickEventWindow();
+    }
+
+    const { workArea } = screen.getPrimaryDisplay();
+    const x = Math.round(workArea.x + (workArea.width - QUICK_EVENT_SIZE.width) / 2);
+    const y = Math.round(workArea.y + workArea.height * 0.3);
+    quickEventWindow.setBounds({ x, y, ...QUICK_EVENT_SIZE });
+
+    quickEventWindow.webContents.send("reset");
+    quickEventWindow.show();
+    quickEventWindow.focus();
+}
+
+function hideQuickEvent() {
+    if (quickEventWindow && !quickEventWindow.isDestroyed()) {
+        quickEventWindow.hide();
+    }
+}
+
 /* ═════════════════════════════  ATALHOS GLOBAIS  ═════════════════════════ */
 
 function toggleWidgetVisibility() {
@@ -692,10 +727,11 @@ function toggleWidgetVisibility() {
 function registerShortcuts() {
     globalShortcut.unregisterAll();
 
-    const { toggleWidget, quickCapture, newNoteWindow } = data.settings.shortcuts;
+    const { toggleWidget, quickCapture, quickEvent, newNoteWindow } = data.settings.shortcuts;
     const bindings = [
         [toggleWidget, toggleWidgetVisibility],
         [quickCapture, showQuickCapture],
+        [quickEvent, showQuickEvent],
         [newNoteWindow, createNoteInWindow]
     ];
 
@@ -862,6 +898,7 @@ function pickTamaMessage(stat) {
 }
 
 function checkTamaNotifications() {
+    if (!Features.pet) return;
     const tama = data.tamagotchi;
     if (!tama) return;
 
@@ -927,6 +964,7 @@ function createTray() {
     tray.setContextMenu(Menu.buildFromTemplate([
         { label: "Abrir Note-Chan", click: openWidgetExpanded },
         { label: "Captura rápida", click: showQuickCapture },
+        { label: "Evento rápido", click: showQuickEvent },
         { type: "separator" },
         { label: "Nova nota",  click: () => quickCreate("nota") },
         { label: "Nova nota em janela", click: createNoteInWindow },
@@ -980,10 +1018,11 @@ app.whenReady().then(() => {
         app.setAppUserModelId("com.renato.notechan");
     }
 
-    GoogleAuth.loadStoredToken();
+    google.iniciar();
     createTray();
     createWidgetWindow();
     createQuickCaptureWindow();
+    createQuickEventWindow();
     createAlarmWindow();
     registerShortcuts();
 
@@ -995,10 +1034,6 @@ app.whenReady().then(() => {
     setInterval(checkEventNotifications, NOTIFY_CHECK_INTERVAL_MS);
     checkTamaNotifications();
     setInterval(checkTamaNotifications, NOTIFY_CHECK_INTERVAL_MS);
-
-    setInterval(() => {
-        if (GoogleAuth.isConnected()) runGoogleSync();
-    }, GOOGLE_SYNC_INTERVAL_MS);
 
     if (app.isPackaged) {
         setTimeout(checkForUpdatesInBackground, UPDATE_CHECK_BOOT_DELAY_MS);
