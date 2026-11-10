@@ -203,7 +203,7 @@ Sincronização exige credenciais OAuth próprias (o app não vem com uma chave 
 1. Crie um projeto em [console.cloud.google.com](https://console.cloud.google.com), ative a **Google Calendar API**.
 2. Configure a tela de consentimento OAuth (Externo/Testing, adicionando seu e-mail como usuário de teste — dispensa verificação do Google pra uso pessoal).
 3. Crie uma credencial **OAuth 2.0 → App para computador** e copie o Client ID e o Client Secret.
-4. Copie `src/js/GoogleAuthConfig.example.js` para `src/js/GoogleAuthConfig.js` (esse arquivo é gitignored) e preencha os dois valores.
+4. Copie `src/js/main/google/GoogleAuthConfig.example.js` para `src/js/main/google/GoogleAuthConfig.js` (esse arquivo é gitignored) e preencha os dois valores.
 5. Em Configurações → Geral → Google Agenda, clique em Conectar e autorize pelo navegador.
 
 ## Desenvolvimento
@@ -234,7 +234,7 @@ Toda a interface usa SVG do conjunto [Lucide](https://lucide.dev/) (ISC license)
 
 ## Arquitetura
 
-- **Processo principal** (`src/js/Main.js`) — dono das janelas, da bandeja do sistema, dos atalhos globais, do alarme e notificações, da sincronização com o Google (`GoogleAuth.js` + `GoogleCalendarSync.js`) e da persistência (`DataManager.js`). Nenhuma janela do renderer tem acesso a Node.js (`nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`).
+- **Processo principal** (`src/js/Main.js`) — dono das janelas, da bandeja do sistema, dos atalhos globais, do alarme e notificações, da sincronização com o Google (`src/js/main/google/`) e da persistência (`DataManager.js`). Nenhuma janela do renderer tem acesso a Node.js (`nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`).
 - **Renderer** (`src/js/preload.js` + `Widget.js`, `Settings.js`, `QuickCapture.js`, `Alarm.js`) — cada janela HTML fala com o processo principal só através de um `window.api` restrito, exposto via `contextBridge` com uma lista fechada de canais IPC permitidos.
 - **Janelas**: widget (notas/listas/eventos/bichinho), Configurações, captura rápida, o popup de alarme e a nota em janela — cada uma é um `BrowserWindow` isolado. A nota em janela é a única redimensionável e a única que aparece na barra de tarefas; pode haver várias abertas ao mesmo tempo, uma por nota.
 - **Módulos compartilhados** (UMD, `require()` no main e `<script>` global no renderer): `EventUtils.js` (datas/recorrência), `TagUtils.js` (paleta de tags), `TamaSprite.js` (desenho do bichinho em SVG por fórmula), `Icons.js` (ícones da UI), `UiUtils.js` (escape de HTML, confirmação de exclusão em dois toques e afins), `RichText.js` (o formato da nota: limpeza, conversão para texto e migração) e `RichEditor.js` (comportamento do editor e a barra de ferramentas, iguais nos dois lugares onde se escreve nota).

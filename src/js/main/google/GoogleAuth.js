@@ -5,8 +5,8 @@ const http = require("http");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const PATHS = require("./Paths");
-const { log, warn } = require("./Logger");
+const PATHS = require("../../Paths");
+const { log, warn } = require("../../Logger");
 
 let config = null;
 try {

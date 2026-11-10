@@ -1,8 +1,8 @@
 /* ─────────────────────────────  GoogleCalendarSync.js  ──────────────────── */
 const crypto = require("crypto");
 const GoogleAuth = require("./GoogleAuth");
-const EventUtils = require("./EventUtils");
-const { warn } = require("./Logger");
+const EventUtils = require("../../EventUtils");
+const { warn } = require("../../Logger");
 
 const CALENDAR_ID = "primary";
 const API_BASE = "https://www.googleapis.com/calendar/v3";

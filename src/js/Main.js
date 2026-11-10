@@ -7,8 +7,7 @@ const PATHS = require("./Paths");
 const { loadData, saveData, saveDataSync } = require("./DataManager");
 const { log, warn, registrarDeRenderer, capturarFalhasDoProcesso } = require("./Logger");
 const EventUtils = require("./EventUtils");
-const GoogleAuth = require("./GoogleAuth");
-const GoogleCalendarSync = require("./GoogleCalendarSync");
+const GoogleIpc = require("./main/google/GoogleIpc");
 const UpdateChecker = require("./UpdateChecker");
 const RichText = require("./RichText");
 
@@ -55,7 +54,6 @@ const NOTIFY_GRACE_MS = 15 * 60 * 1000;
 
 const ALARM_SIZE = { width: 340, height: 300 };
 const SNOOZE_MS = 5 * 60 * 1000;
-const GOOGLE_SYNC_INTERVAL_MS = 15 * 60 * 1000;
 
 /* ═════════════════════════════  UTILITÁRIOS  ════════════════════════════ */
 
@@ -135,7 +133,7 @@ function setMode(collapsed) {
 
     if (wasCollapsed && !collapsed) {
         checkNoTimeEventsToday();
-        if (GoogleAuth.isConnected()) runGoogleSync();
+        google.sincronizarSeConectado();
     }
 
     if (!widgetWindow || widgetWindow.isDestroyed()) return;
@@ -288,7 +286,7 @@ ipcMain.on("quick-event-submit", (event, payload) => {
     log("[QUICK-EVENT] Evento criado:", evt.title, evt.date, evt.startTime || "");
     debouncedSaveData();
     widgetWindow?.webContents.send("events-updated", data.events);
-    if (GoogleAuth.isConnected()) runGoogleSync();
+    google.sincronizarSeConectado();
 });
 
 ipcMain.on("quick-event-cancel", () => hideQuickEvent());
@@ -339,53 +337,11 @@ ipcMain.on("open-link", (event, url) => abrirNoNavegador(url, "(link de evento)"
 
 /* ═══════════════════════  SINCRONIZAÇÃO COM O GOOGLE  ═════════════════════ */
 
-function pushSyncedDataToRenderers() {
-    widgetWindow?.webContents.send("events-updated", data.events);
-    settingsWindow?.webContents.send("birthdays-updated", data.birthdays);
-}
-
-let syncInFlight = null;
-
-async function doGoogleSync() {
-    const result = await GoogleCalendarSync.runSync(data);
-    if (result.ok) {
-        log("[GOOGLE] Sincronização concluída —", result.count, "eventos processados");
-        debouncedSaveData();
-        pushSyncedDataToRenderers();
-    } else if (result.error !== "not-connected") {
-        warn("[GOOGLE] Sincronização falhou:", result.error);
-    }
-    return result;
-}
-
-function runGoogleSync() {
-    if (syncInFlight) {
-        log("[GOOGLE] Sincronização já em andamento — reaproveitando a atual.");
-        return syncInFlight;
-    }
-    syncInFlight = doGoogleSync().finally(() => { syncInFlight = null; });
-    return syncInFlight;
-}
-
-ipcMain.handle("google-auth-status", () => ({
-    configured: GoogleAuth.isConfigured(),
-    connected: GoogleAuth.isConnected(),
-    email: GoogleAuth.getEmail(),
-    lastSyncAt: data.googleSync.lastSyncAt
-}));
-
-ipcMain.handle("google-auth-start", async () => {
-    const result = await GoogleAuth.startOAuthFlow(); // rejeita a promise no invoke se falhar/cancelar
-    runGoogleSync(); // primeira sincronização logo após conectar, sem esperar o usuário abrir/fechar o widget
-    return { connected: true, email: result.email };
+const google = GoogleIpc.criar({
+    obterDados: () => data,
+    salvar: () => debouncedSaveData(),
+    obterJanelas: () => ({ widget: widgetWindow, settings: settingsWindow })
 });
-
-ipcMain.handle("google-disconnect", async () => {
-    await GoogleAuth.disconnect();
-    return { connected: false };
-});
-
-ipcMain.handle("google-sync-now", () => runGoogleSync());
 
 /* ══════════════════════════  ATUALIZAÇÃO DE VERSÃO  ══════════════════════ */
 
@@ -1060,7 +1016,7 @@ app.whenReady().then(() => {
         app.setAppUserModelId("com.renato.notechan");
     }
 
-    GoogleAuth.loadStoredToken();
+    google.iniciar();
     createTray();
     createWidgetWindow();
     createQuickCaptureWindow();
@@ -1076,10 +1032,6 @@ app.whenReady().then(() => {
     setInterval(checkEventNotifications, NOTIFY_CHECK_INTERVAL_MS);
     checkTamaNotifications();
     setInterval(checkTamaNotifications, NOTIFY_CHECK_INTERVAL_MS);
-
-    setInterval(() => {
-        if (GoogleAuth.isConnected()) runGoogleSync();
-    }, GOOGLE_SYNC_INTERVAL_MS);
 
     if (app.isPackaged) {
         setTimeout(checkForUpdatesInBackground, UPDATE_CHECK_BOOT_DELAY_MS);
