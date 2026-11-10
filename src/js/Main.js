@@ -8,6 +8,7 @@ const { loadData, saveData, saveDataSync } = require("./DataManager");
 const { log, warn, registrarDeRenderer, capturarFalhasDoProcesso } = require("./Logger");
 const EventUtils = require("./EventUtils");
 const GoogleIpc = require("./main/google/GoogleIpc");
+const Features = require("./Features");
 const UpdateChecker = require("./UpdateChecker");
 const RichText = require("./RichText");
 
@@ -897,6 +898,7 @@ function pickTamaMessage(stat) {
 }
 
 function checkTamaNotifications() {
+    if (!Features.pet) return;
     const tama = data.tamagotchi;
     if (!tama) return;
 

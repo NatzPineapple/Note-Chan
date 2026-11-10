@@ -48,12 +48,15 @@ const extras = ExtraTools.criar({
     aoAbrir: () => { tama.fechar(); habits.fechar(); }
 });
 
-const tama = TamaPet.criar({
-    obterDados,
-    container,
-    estaPronto: () => booted,
-    aoAbrir: () => { extras.fecharTudo(); habits.fechar(); }
-});
+const tama = Features.pet
+    ? TamaPet.criar({
+        obterDados,
+        container,
+        estaPronto: () => booted,
+        aoAbrir: () => { extras.fecharTudo(); habits.fechar(); }
+    })
+    : TamaPet.desligado();
+container.classList.toggle("pet-off", !Features.pet);
 
 const habits = HabitTracker.criar({
     obterDados,

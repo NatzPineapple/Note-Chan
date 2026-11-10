@@ -286,5 +286,13 @@
         return { iniciar, abrir, fechar, estaAberto, aoCompletarTarefa, aoAbrirApp };
     }
 
-    return { criar };
+    function desligado() {
+        const nada = () => {};
+        return {
+            iniciar: nada, abrir: nada, fechar: nada, estaAberto: () => false,
+            aoCompletarTarefa: nada, aoAbrirApp: nada
+        };
+    }
+
+    return { criar, desligado };
 });
