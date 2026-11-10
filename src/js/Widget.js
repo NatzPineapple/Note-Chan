@@ -17,20 +17,9 @@ const container   = document.getElementById("container");
 const board       = document.getElementById("board");
 const newBtn      = document.getElementById("new-btn");
 const tabButtons  = document.querySelectorAll(".tab-btn");
-const searchBtn   = document.getElementById("searchbtn");
-const searchBar   = document.getElementById("search-bar");
-const searchInput = document.getElementById("search-input");
 
-const timerBtn         = document.getElementById("timerbtn");
-const timerPanel       = document.getElementById("timer-panel");
-const timerBadge       = document.getElementById("timer-badge");
-const timerDisplay     = document.getElementById("timer-display");
-const timerModeButtons = document.querySelectorAll(".timer-mode-btn");
-const timerDurationRow = document.getElementById("timer-duration-row");
-const timerMinutesEl   = document.getElementById("timer-minutes");
-const timerSecondsEl   = document.getElementById("timer-seconds");
-const timerStartBtn    = document.getElementById("timer-start-btn");
-const timerResetBtn    = document.getElementById("timer-reset-btn");
+const { newId, escapeHtml } = UiUtils;
+const obterDados = () => data;
 
 /* ══════════════════════════════  PERSISTÊNCIA  ══════════════════════════ */
 
@@ -51,82 +40,44 @@ function scheduleSave() {
     }, 400);
 }
 
-/* ═══════════════════════════════  UTILIDADES  ═══════════════════════════ */
+/* ═══════════════════════════════  MÓDULOS  ═══════════════════════════════ */
 
-const { newId, escapeHtml, formatBR, armDeleteConfirm, clickStartedInside } = UiUtils;
+const extras = ExtraTools.criar({
+    obterDados,
+    renderBoard: () => renderBoard(),
+    aoAbrir: () => { tama.fechar(); habits.fechar(); }
+});
 
-function now() {
-    return Date.now();
-}
+const tama = TamaPet.criar({
+    obterDados,
+    container,
+    estaPronto: () => booted,
+    aoAbrir: () => { extras.fecharTudo(); habits.fechar(); }
+});
 
-function formatDate(ts) {
-    if (!ts) return "";
-    return new Date(ts).toLocaleString("pt-BR", {
-        day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"
-    });
-}
+const habits = HabitTracker.criar({
+    obterDados,
+    container,
+    salvar: scheduleSave,
+    aoAbrir: () => { extras.fecharTudo(); tama.fechar(); },
+    aoCompletar: () => tama.aoCompletarTarefa(8, 4)
+});
 
-/* ═══════════════════════════════════  TAGS  ══════════════════════════════ */
-
-function cardTagsInnerHtml(tagIds) {
-    if (!tagIds || tagIds.length === 0) return "";
-    return tagIds
-        .map(id => TagUtils.findTag(data.tags, id))
-        .filter(Boolean)
-        .map(tag => `<span class="tag-pill" style="${TagUtils.pillStyle(tag.color)}">${escapeHtml(tag.name)}</span>`)
-        .join("");
-}
-
-function refreshCardTagsHeader(card, item) {
-    const slot = card?.querySelector(".card-tags");
-    if (slot) slot.innerHTML = cardTagsInnerHtml(item.tagIds);
-}
-
-function renderTagPicker(pickerEl, item) {
-    pickerEl.innerHTML = "";
-    if (data.tags.length === 0) {
-        pickerEl.innerHTML = `<span class="tag-picker-hint">Crie tags em Configurações → Tags</span>`;
-        return;
-    }
-    item.tagIds = item.tagIds || [];
-    data.tags.forEach(tag => {
-        const active = item.tagIds.includes(tag.id);
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "tag-toggle" + (active ? " active" : "");
-        btn.textContent = tag.name;
-        if (active) btn.setAttribute("style", TagUtils.pillStyle(tag.color));
-        btn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            item.tagIds = item.tagIds.includes(tag.id)
-                ? item.tagIds.filter(id => id !== tag.id)
-                : [...item.tagIds, tag.id];
-            item.updatedAt = now();
-            scheduleSave();
-            renderTagPicker(pickerEl, item);
-            refreshCardTagsHeader(pickerEl.closest(".card"), item);
-        });
-        pickerEl.appendChild(btn);
-    });
-}
-
-const RECURRENCE_ICON = Icons.svg("repeat", 11);
-const RECURRENCE_LABELS = {
-    none: "Não se repete",
-    daily: `${RECURRENCE_ICON} Diário`,
-    weekly: `${RECURRENCE_ICON} Semanal`,
-    monthly: `${RECURRENCE_ICON} Mensal`,
-    yearly: `${RECURRENCE_ICON} Anual`
+const cardCtx = {
+    obterDados,
+    salvar: scheduleSave,
+    renderBoard: () => renderBoard(),
+    board,
+    expanded,
+    aoCompletarTarefa: (fome, xp) => tama.aoCompletarTarefa(fome, xp)
 };
+cardCtx.base = CardBase.criar({ ...cardCtx, estaEditando: () => isEditingContext() });
 
-function occurrenceBadge(occDate) {
-    if (!occDate) return { text: `${Icons.svg("check", 11)} Concluído`, cls: "done" };
-    const today = EventUtils.todayISO();
-    if (occDate === today) return { text: "Hoje", cls: "today" };
-    if (occDate === EventUtils.addInterval(today, "daily")) return { text: "Amanhã", cls: "soon" };
-    if (occDate < today) return { text: `Atrasado · ${formatBR(occDate)}`, cls: "overdue" };
-    return { text: formatBR(occDate), cls: "" };
-}
+const CARDS_DA_ABA = {
+    notas: NoteCard.criar(cardCtx),
+    listas: ListCard.criar(cardCtx),
+    eventos: EventCard.criar(cardCtx)
+};
 
 /* ═══════════════════════════════  ABAS  ══════════════════════════════════ */
 
@@ -143,6 +94,8 @@ function setActiveTab(tab) {
 tabButtons.forEach(btn => {
     btn.addEventListener("click", () => setActiveTab(btn.dataset.tab));
 });
+
+newBtn.addEventListener("click", () => CARDS_DA_ABA[activeTab].criarNovo());
 
 /* ═══════════════════════  DICA DE ATALHOS NAS ABAS  ═══════════════════════ */
 
@@ -197,1025 +150,6 @@ tabButtons.forEach(btn => {
     btn.addEventListener("mousedown", esconderDica);
 });
 
-/* ═══════════════════════════════  BUSCA  ══════════════════════════════════ */
-
-let searchQuery = "";
-
-function normalizeSearch(str) {
-    return (str ?? "")
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase();
-}
-
-function isSearchOpen() {
-    return searchBar.classList.contains("open");
-}
-
-function openSearch() {
-    closeTimerPanel();
-    tama.fechar();
-    habits.fechar();
-    searchBar.classList.add("open");
-    searchInput.focus();
-    searchInput.select();
-}
-
-function closeSearch() {
-    searchBar.classList.remove("open");
-    if (searchQuery) {
-        searchInput.value = "";
-        searchQuery = "";
-        renderBoard();
-    }
-}
-
-function toggleSearch() {
-    if (isSearchOpen()) closeSearch();
-    else openSearch();
-}
-
-searchBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    toggleSearch();
-});
-
-searchInput.addEventListener("input", () => {
-    searchQuery = normalizeSearch(searchInput.value);
-    renderBoard();
-});
-
-searchInput.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        closeSearch();
-    }
-});
-
-// Foco saiu do campo (clicou em outro lugar, trocou de aba, etc.) -> some
-// sozinha, mesmo padrão de recolher usado nos cards (ver focusout em
-// noteCardNode/listCardNode/eventCardNode).
-searchInput.addEventListener("blur", () => {
-    setTimeout(() => {
-        if (document.activeElement === searchInput) return;
-        closeSearch();
-    }, 0);
-});
-
-/* ═══════════════════════  CRONÔMETRO / TEMPORIZADOR  ══════════════════════ */
-
-let timerMode = "stopwatch"; 
-let timerRunning = false;
-let timerAccumulatedMs = 0;      
-let timerRunStartTs = null;      
-let timerDurationMs = 5 * 60000; 
-let timerTickHandle = null;
-let stopTimerSound = null;
-
-function formatTimerMs(ms) {
-    const totalSec = Math.max(0, Math.round(ms / 1000));
-    const h = Math.floor(totalSec / 3600);
-    const m = Math.floor((totalSec % 3600) / 60);
-    const s = totalSec % 60;
-    const mm = String(m).padStart(2, "0");
-    const ss = String(s).padStart(2, "0");
-    return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
-}
-
-function timerElapsedMs() {
-    return timerAccumulatedMs + (timerRunning ? Date.now() - timerRunStartTs : 0);
-}
-
-function isTimerOpen() {
-    return timerPanel.classList.contains("open");
-}
-
-function updateTimerDisplay() {
-    const elapsed = timerElapsedMs();
-    let currentMs = elapsed;
-    let done = false;
-    if (timerMode === "timer") {
-        currentMs = timerDurationMs - elapsed;
-        done = currentMs <= 0;
-        if (done) currentMs = 0;
-    }
-
-    const text = formatTimerMs(currentMs);
-    timerDisplay.textContent = text;
-    timerDisplay.classList.toggle("timer-done", done);
-
-    timerBadge.textContent = (timerRunning || elapsed > 0) ? text : "";
-    timerBadge.classList.toggle("timer-done", done);
-
-    return done;
-}
-
-function stopTimerTick() {
-    if (timerTickHandle) { clearInterval(timerTickHandle); timerTickHandle = null; }
-}
-
-function playTimerDoneSound() {
-    if (stopTimerSound) { stopTimerSound(); stopTimerSound = null; }
-    const alarm = data.settings?.alarm || {};
-    stopTimerSound = AlarmSounds.play(alarm.sound || "sininho", alarm.volume ?? 70);
-    setTimeout(() => { if (stopTimerSound) { stopTimerSound(); stopTimerSound = null; } }, 2600);
-}
-
-function timerFinished() {
-    timerRunning = false;
-    timerRunStartTs = null;
-    timerAccumulatedMs = timerDurationMs;
-    stopTimerTick();
-    updateTimerDisplay();
-    playTimerDoneSound();
-    timerStartBtn.textContent = "▶ Iniciar";
-    setTimeout(() => { if (!timerRunning) resetTimer(); }, 2600);
-}
-
-function startTimerTick() {
-    stopTimerTick();
-    timerTickHandle = setInterval(() => {
-        const done = updateTimerDisplay();
-        if (timerMode === "timer" && done) timerFinished();
-    }, 250);
-}
-
-function isChoosingDuration() {
-    return timerMode === "timer" && !timerRunning && timerAccumulatedMs === 0;
-}
-
-function timerHasProgress() {
-    return timerRunning || timerAccumulatedMs > 0;
-}
-
-function updateDurationRowVisibility() {
-    timerDurationRow.classList.toggle("visible", isChoosingDuration());
-}
-
-function updateDurationPreview() {
-    if (!isChoosingDuration()) return;
-    const min = Math.max(0, Math.min(180, Number(timerMinutesEl.value) || 0));
-    const sec = Math.max(0, Math.min(59, Number(timerSecondsEl.value) || 0));
-    timerDisplay.textContent = formatTimerMs((min * 60 + sec) * 1000);
-    timerDisplay.classList.remove("timer-done");
-    timerBadge.textContent = "";
-    timerBadge.classList.remove("timer-done");
-}
-
-function refreshTimerDisplay() {
-    if (isChoosingDuration()) updateDurationPreview();
-    else updateTimerDisplay();
-}
-
-timerMinutesEl.addEventListener("input", updateDurationPreview);
-timerSecondsEl.addEventListener("input", updateDurationPreview);
-
-function setTimerMode(mode) {
-    if (timerHasProgress() || mode === timerMode) return; 
-    timerAccumulatedMs = 0;
-    timerMode = mode;
-    timerStartBtn.textContent = "▶ Iniciar";
-    timerModeButtons.forEach(btn => btn.classList.toggle("active", btn.dataset.mode === mode));
-    updateDurationRowVisibility();
-    refreshTimerDisplay();
-}
-
-timerModeButtons.forEach(btn => {
-    btn.addEventListener("click", () => setTimerMode(btn.dataset.mode));
-});
-
-function startPauseTimer() {
-    if (timerRunning) {
-        // pausa
-        timerAccumulatedMs = timerElapsedMs();
-        timerRunning = false;
-        timerRunStartTs = null;
-        stopTimerTick();
-        timerStartBtn.textContent = "▶ Continuar";
-    } else {
-        if (timerMode === "timer" && timerAccumulatedMs === 0) {
-            const min = Math.max(0, Math.min(180, Number(timerMinutesEl.value) || 0));
-            const sec = Math.max(0, Math.min(59, Number(timerSecondsEl.value) || 0));
-            timerDurationMs = (min * 60 + sec) * 1000;
-            if (timerDurationMs <= 0) return; // nada pra contar
-        }
-        timerRunning = true;
-        timerRunStartTs = Date.now();
-        startTimerTick();
-        timerStartBtn.textContent = "⏸ Pausar";
-    }
-    timerModeButtons.forEach(btn => btn.disabled = timerHasProgress());
-    updateDurationRowVisibility();
-    refreshTimerDisplay();
-}
-
-function resetTimer() {
-    timerRunning = false;
-    timerRunStartTs = null;
-    timerAccumulatedMs = 0;
-    stopTimerTick();
-    if (stopTimerSound) { stopTimerSound(); stopTimerSound = null; }
-    timerStartBtn.textContent = "▶ Iniciar";
-    timerModeButtons.forEach(btn => btn.disabled = false);
-    updateDurationRowVisibility();
-    refreshTimerDisplay();
-}
-
-timerStartBtn.addEventListener("click", startPauseTimer);
-timerResetBtn.addEventListener("click", resetTimer);
-
-function openTimerPanel() {
-    closeSearch();
-    tama.fechar();
-    habits.fechar();
-    timerPanel.classList.add("open");
-}
-
-function closeTimerPanel() {
-    timerPanel.classList.remove("open");
-}
-
-function toggleTimerPanel() {
-    if (isTimerOpen()) closeTimerPanel();
-    else openTimerPanel();
-}
-
-timerBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    toggleTimerPanel();
-});
-
-// Clicar fora fecha o painel (não tem um único campo pra pendurar um
-// blur/focusout como a busca -- é um painel com vários controles).
-document.addEventListener("click", (e) => {
-    if (!isTimerOpen()) return;
-    if (timerPanel.contains(e.target) || timerBtn.contains(e.target)) return;
-    closeTimerPanel();
-});
-
-updateDurationRowVisibility();
-refreshTimerDisplay();
-
-/* ═══════════════════════════  BICHINHO VIRTUAL  ═══════════════════════════ */
-const tama = TamaPet.criar({
-    data,
-    container,
-    estaPronto: () => booted,
-    aoAbrir: () => { closeSearch(); closeTimerPanel(); habits.fechar(); }
-});
-
-/* ═════════════════════════════  MAPA DE HÁBITOS  ═════════════════════════ */
-const habits = HabitTracker.criar({
-    obterDados: () => data,
-    container,
-    salvar: scheduleSave,
-    aoAbrir: () => { closeSearch(); closeTimerPanel(); tama.fechar(); },
-    aoCompletar: () => tama.aoCompletarTarefa(8, 4)
-});
-
-/* ═════════════════════════════  CRIAÇÃO  ═════════════════════════════════ */
-
-function createNote() {
-    const note = { id: newId(), title: "Nova nota", content: "", createdAt: now(), updatedAt: now() };
-    data.notes.unshift(note);
-    scheduleSave();
-    renderBoard();
-    expanded.add(note.id);
-    const card = board.querySelector(`.card[data-id="${note.id}"]`);
-    if (card) {
-        card.classList.add("expanded");
-        card.querySelector(".note-editor")?.focus();
-    }
-}
-
-function createList() {
-    const list = { id: newId(), title: "Nova lista", items: [], createdAt: now(), updatedAt: now() };
-    data.lists.unshift(list);
-    scheduleSave();
-    renderBoard();
-    expanded.add(list.id);
-    const card = board.querySelector(`.card[data-id="${list.id}"]`);
-    if (card) {
-        card.classList.add("expanded");
-        card.querySelector(".item-add")?.focus();
-    }
-}
-
-function createEvent() {
-    const event = {
-        id: newId(),
-        title: "Novo evento",
-        date: EventUtils.todayISO(),
-        recurrence: "none",
-        startTime: null,
-        endTime: null,
-        link: null,
-        completedDates: [],
-        items: [],
-        createdAt: now(),
-        updatedAt: now()
-    };
-    data.events.push(event);
-    scheduleSave();
-    renderBoard();
-    expanded.add(event.id);
-    const card = board.querySelector(`.card[data-id="${event.id}"]`);
-    if (card) {
-        card.classList.add("expanded");
-        const title = card.querySelector(".card-title");
-        title.contentEditable = "true";
-        title.focus();
-        document.execCommand("selectAll", false, null);
-    }
-}
-
-newBtn.addEventListener("click", () => {
-    if (activeTab === "notas") createNote();
-    else if (activeTab === "listas") createList();
-    else createEvent();
-});
-
-/* ══════════════════════  ARRASTAR-E-SOLTAR DE CARDS  ══════════════════════ */
-
-let dragCardId = null;
-
-function attachCardDrag(card, id, itemsArray) {
-    card.draggable = true;
-
-    card.addEventListener("dragstart", (e) => {
-        if (isEditingContext()) { e.preventDefault(); return; }
-        dragCardId = id;
-        e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", id);
-        card.classList.add("dragging");
-    });
-    card.addEventListener("dragend", () => {
-        card.classList.remove("dragging");
-        board.querySelectorAll(".card").forEach(el =>
-            el.classList.remove("drag-over-top", "drag-over-bottom"));
-        dragCardId = null;
-    });
-    card.addEventListener("dragover", (e) => {
-        if (!dragCardId || dragCardId === id) return;
-        e.preventDefault();
-        const before = (e.clientY - card.getBoundingClientRect().top) < card.offsetHeight / 2;
-        card.classList.toggle("drag-over-top", before);
-        card.classList.toggle("drag-over-bottom", !before);
-    });
-    card.addEventListener("dragleave", () => {
-        card.classList.remove("drag-over-top", "drag-over-bottom");
-    });
-    card.addEventListener("drop", (e) => {
-        e.preventDefault();
-        card.classList.remove("drag-over-top", "drag-over-bottom");
-        if (!dragCardId || dragCardId === id) return;
-
-        const fromIdx = itemsArray.findIndex(x => x.id === dragCardId);
-        if (fromIdx === -1) return; // veio de outra aba — ignora
-
-        const [moved] = itemsArray.splice(fromIdx, 1);
-        const before = (e.clientY - card.getBoundingClientRect().top) < card.offsetHeight / 2;
-        let toIdx = itemsArray.findIndex(x => x.id === id);
-        if (!before) toIdx += 1;
-        itemsArray.splice(toIdx, 0, moved);
-        scheduleSave();
-        renderBoard();
-    });
-}
-
-/* ═════════════  CABEÇALHO DO CARD: ABRIR, FECHAR E RENOMEAR  ══════════════ */
-function attachHeaderToggle(card, title, expand, collapse) {
-    RichEditor.ligarSetas(title);
-
-    function beginTitleEdit() {
-        if (!card.classList.contains("expanded")) expand(false);
-        title.contentEditable = "true";
-        title.focus();
-        document.execCommand("selectAll", false, null);
-    }
-
-    card.querySelector(".card-header").addEventListener("click", (e) => {
-        if (e.detail > 1) return; // 2º clique do duplo-clique — quem trata é o dblclick
-        if (!card.classList.contains("expanded")) { expand(true); return; }
-        collapse();
-    });
-
-    card.addEventListener("focusout", () => {
-        setTimeout(() => {
-            if (card.contains(document.activeElement)) return;
-            if (clickStartedInside(card)) return;
-            collapse();
-        }, 0);
-    });
-
-    title.addEventListener("dblclick", (e) => {
-        e.stopPropagation();
-        beginTitleEdit();
-    });
-
-    title.addEventListener("click", (e) => { if (title.isContentEditable) e.stopPropagation(); });
-
-    return { beginTitleEdit };
-}
-
-/* ═══════════════════════════════  NOTAS  ═════════════════════════════════ */
-
-function noteCardNode(note) {
-    const card = document.createElement("div");
-    card.className = "card note-card" + (expanded.has(note.id) ? " expanded" : "");
-    card.dataset.id = note.id;
-
-    card.innerHTML = `
-        <div class="card-delete" draggable="false" title="Excluir nota">${Icons.svg("x", 12)}</div>
-        <div class="card-window" draggable="false" title="Abrir em janela">${Icons.svg("maximize-2", 12)}</div>
-        <div class="card-header">
-            <span class="card-title" spellcheck="false" draggable="false">${escapeHtml(note.title)}</span>
-            <div class="card-tags">${cardTagsInnerHtml(note.tagIds)}</div>
-        </div>
-        <div class="card-preview">${escapeHtml(RichText.toPlainText(note.content).slice(0, 80)) || "(vazia)"}</div>
-        <div class="card-body">
-            <div class="nc-barra"></div>
-            <div class="note-editor nc-rico" contenteditable="true" spellcheck="false" draggable="false"
-                 data-placeholder="Escreva aqui...">${RichText.sanitize(note.content)}</div>
-            <div class="card-meta">Atualizado em ${formatDate(note.updatedAt)}</div>
-            <div class="tag-picker"></div>
-        </div>
-    `;
-
-    renderTagPicker(card.querySelector(".tag-picker"), note);
-
-    const title = card.querySelector(".card-title");
-
-    function expandNote(focusEditor) {
-        card.classList.add("expanded");
-        expanded.add(note.id);
-        if (focusEditor) card.querySelector(".note-editor")?.focus();
-    }
-
-    function atualizarPrevia() {
-        card.querySelector(".card-preview").textContent =
-            RichText.toPlainText(note.content).slice(0, 80) || "(vazia)";
-    }
-
-    function collapseNote() {
-        if (!card.classList.contains("expanded")) return;
-        card.classList.remove("expanded");
-        expanded.delete(note.id);
-        atualizarPrevia(); 
-        if (title.isContentEditable) commitTitle();
-        if (note.title === "Nova nota" && RichText.isEmpty(note.content)) {
-            data.notes = data.notes.filter(n => n.id !== note.id);
-            card.remove();
-            scheduleSave();
-            if (data.notes.length === 0) renderBoard();
-        }
-    }
-
-    attachHeaderToggle(card, title, expandNote, collapseNote);
-
-    function commitTitle() {
-        title.contentEditable = "false";
-        note.title = title.textContent.trim() || "Sem título";
-        title.textContent = note.title;
-        note.updatedAt = now();
-        scheduleSave();
-    }
-
-    title.addEventListener("blur", commitTitle);
-    title.addEventListener("keydown", (e) => {
-        if (e.key !== "Enter") return;
-        e.preventDefault();
-        e.stopPropagation();
-        title.blur();
-    });
-
-    const editor = card.querySelector(".note-editor");
-    const editorApi = RichEditor.attach(editor, {
-        jaHigienizado: true, 
-        onChange: () => {
-            note.content = editor.innerHTML;
-            note.updatedAt = now();
-            scheduleSave();
-        },
-        onEscape: () => editor.blur(),
-        indentSize: () => data.settings?.editor?.indentSize,
-        atalhos: () => data.settings?.editorShortcuts
-    });
-
-    RichEditor.montarBarra(card.querySelector(".nc-barra"), editorApi, RichEditor.BARRA_BASICA, {
-        atalhos: () => data.settings?.editorShortcuts
-    });
-
-    card.querySelector(".card-window").addEventListener("click", (e) => {
-        e.stopPropagation();
-        window.api.send("open-note-window", note.id);
-    });
-
-    card.querySelector(".card-delete").addEventListener("click", (e) => {
-        e.stopPropagation();
-        armDeleteConfirm(e.currentTarget, () => {
-            data.notes = data.notes.filter(n => n.id !== note.id);
-            expanded.delete(note.id);
-            scheduleSave();
-            card.remove();
-            if (data.notes.length === 0) renderBoard();
-        });
-    });
-
-    attachCardDrag(card, note.id, data.notes);
-    return card;
-}
-
-/* ═══════════════════════════════  LISTAS  ════════════════════════════════ */
-
-let dragItemId = null;
-
-function listItemNode(list, item, refreshPreview, insertItemAfter) {
-    const li = document.createElement("div");
-    li.className = "list-item" + (item.done ? " done" : "");
-    li.dataset.id = item.id;
-    li.draggable = true;
-
-    li.innerHTML = `
-        <input type="checkbox" draggable="false" ${item.done ? "checked" : ""} />
-        <span class="item-text" contenteditable="true" spellcheck="false" draggable="false">${escapeHtml(item.text)}</span>
-        <div class="item-delete" draggable="false" title="Excluir item">${Icons.svg("x", 10)}</div>
-    `;
-
-    li.addEventListener("dragstart", (e) => {
-        dragItemId = item.id;
-        e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", item.id);
-        li.classList.add("dragging");
-    });
-    li.addEventListener("dragend", () => {
-        li.classList.remove("dragging");
-        li.parentElement?.querySelectorAll(".list-item").forEach(el =>
-            el.classList.remove("drag-over-top", "drag-over-bottom"));
-        dragItemId = null;
-    });
-    li.addEventListener("dragover", (e) => {
-        if (!dragItemId || dragItemId === item.id) return;
-        e.preventDefault();
-        const before = (e.clientY - li.getBoundingClientRect().top) < li.offsetHeight / 2;
-        li.classList.toggle("drag-over-top", before);
-        li.classList.toggle("drag-over-bottom", !before);
-    });
-    li.addEventListener("dragleave", () => {
-        li.classList.remove("drag-over-top", "drag-over-bottom");
-    });
-    li.addEventListener("drop", (e) => {
-        e.preventDefault();
-        li.classList.remove("drag-over-top", "drag-over-bottom");
-        if (!dragItemId || dragItemId === item.id) return;
-
-        const fromIdx = list.items.findIndex(i => i.id === dragItemId);
-        if (fromIdx === -1) return; // veio de outra lista — ignora
-
-        const [moved] = list.items.splice(fromIdx, 1);
-        const before = (e.clientY - li.getBoundingClientRect().top) < li.offsetHeight / 2;
-        let toIdx = list.items.findIndex(i => i.id === item.id);
-        if (!before) toIdx += 1;
-        list.items.splice(toIdx, 0, moved);
-        list.updatedAt = now();
-        scheduleSave();
-
-        const listEl = li.parentElement;
-        listEl.innerHTML = "";
-        list.items.forEach(it => listEl.appendChild(listItemNode(list, it, refreshPreview, insertItemAfter)));
-    });
-
-    li.querySelector('input[type="checkbox"]').addEventListener("change", (e) => {
-        item.done = e.target.checked;
-        li.classList.toggle("done", item.done);
-        list.updatedAt = now();
-        refreshPreview();
-        scheduleSave();
-        if (item.done) tama.aoCompletarTarefa(6, 3);
-    });
-
-    const text = li.querySelector(".item-text");
-    RichEditor.ligarSetas(text);
-    text.addEventListener("blur", () => {
-        item.text = text.textContent.trim();
-        if (!item.text) {
-            list.items = list.items.filter(i => i.id !== item.id);
-            li.remove();
-        }
-        list.updatedAt = now();
-        refreshPreview();
-        scheduleSave();
-    });
-    text.addEventListener("keydown", (e) => {
-        if (e.key !== "Enter") return;
-        e.preventDefault();
-        e.stopPropagation();
-        if (!text.textContent.trim()) {
-            list.items = list.items.filter(i => i.id !== item.id);
-            list.updatedAt = now();
-            refreshPreview();
-            scheduleSave();
-            li.remove();
-        } else {
-            insertItemAfter(item.id); // continua a lista com um item novo logo abaixo
-        }
-    });
-
-    li.querySelector(".item-delete").addEventListener("click", () => {
-        list.items = list.items.filter(i => i.id !== item.id);
-        list.updatedAt = now();
-        refreshPreview();
-        scheduleSave();
-        li.remove();
-    });
-
-    return li;
-}
-
-function listCardNode(list) {
-    const card = document.createElement("div");
-    card.className = "card" + (expanded.has(list.id) ? " expanded" : "");
-    card.dataset.id = list.id;
-
-    card.innerHTML = `
-        <div class="card-delete" draggable="false" title="Excluir lista">${Icons.svg("x", 12)}</div>
-        <div class="card-header">
-            <span class="card-title" spellcheck="false" draggable="false">${escapeHtml(list.title)}</span>
-            <div class="card-tags">${cardTagsInnerHtml(list.tagIds)}</div>
-        </div>
-        <div class="card-preview"></div>
-        <div class="card-body">
-            <div class="item-list"></div>
-            <input class="item-add" type="text" placeholder="+ Adicionar item e pressionar Enter" draggable="false" />
-            <div class="tag-picker"></div>
-        </div>
-    `;
-
-    renderTagPicker(card.querySelector(".tag-picker"), list);
-
-    function refreshPreview() {
-        const done = list.items.filter(i => i.done).length;
-        const allDone = list.items.length > 0 && done === list.items.length;
-        card.classList.toggle("list-done", allDone);
-        card.querySelector(".card-preview").innerHTML =
-            (allDone ? `<span class="event-badge done">Concluída</span>` : "") +
-            `${done}/${list.items.length} concluídos`;
-    }
-    refreshPreview();
-
-    // Enter num item não vazio continua a lista: cria um item novo logo
-    // abaixo do de origem e move o foco pra lá (estilo Notion/Todoist).
-    function insertItemAfter(afterId) {
-        const idx = list.items.findIndex(i => i.id === afterId);
-        const newItem = { id: newId(), text: "", done: false };
-        list.items.splice(idx === -1 ? list.items.length : idx + 1, 0, newItem);
-        list.updatedAt = now();
-        refreshPreview();
-        scheduleSave();
-
-        const afterLi = itemList.querySelector(`.list-item[data-id="${afterId}"]`);
-        const newLi = listItemNode(list, newItem, refreshPreview, insertItemAfter);
-        if (afterLi && afterLi.nextSibling) itemList.insertBefore(newLi, afterLi.nextSibling);
-        else itemList.appendChild(newLi);
-        newLi.querySelector(".item-text").focus();
-    }
-
-    const itemList = card.querySelector(".item-list");
-    list.items.forEach(item => itemList.appendChild(listItemNode(list, item, refreshPreview, insertItemAfter)));
-
-    const title = card.querySelector(".card-title");
-
-    function expandList(focusAddInput) {
-        card.classList.add("expanded");
-        expanded.add(list.id);
-        if (focusAddInput) card.querySelector(".item-add")?.focus();
-    }
-
-    function collapseList() {
-        if (!card.classList.contains("expanded")) return;
-        card.classList.remove("expanded");
-        expanded.delete(list.id);
-        if (title.isContentEditable) commitTitle();
-        // lista nunca editada (título padrão e sem itens) — some sozinha.
-        if (list.title === "Nova lista" && list.items.length === 0) {
-            data.lists = data.lists.filter(l => l.id !== list.id);
-            card.remove();
-            scheduleSave();
-            if (data.lists.length === 0) renderBoard();
-        }
-    }
-
-    attachHeaderToggle(card, title, expandList, collapseList);
-
-    function commitTitle() {
-        title.contentEditable = "false";
-        list.title = title.textContent.trim() || "Sem título";
-        title.textContent = list.title;
-        list.updatedAt = now();
-        scheduleSave();
-    }
-
-    title.addEventListener("blur", commitTitle);
-    title.addEventListener("keydown", (e) => {
-        if (e.key !== "Enter") return;
-        e.preventDefault();
-        e.stopPropagation();
-        title.blur();
-    });
-
-    const addInput = card.querySelector(".item-add");
-    RichEditor.ligarSetas(addInput);
-    addInput.addEventListener("keydown", (e) => {
-        if (e.key !== "Enter") return;
-        e.stopPropagation();
-        const text = addInput.value.trim();
-        if (!text) return;
-        const item = { id: newId(), text, done: false };
-        list.items.push(item);
-        list.updatedAt = now();
-        itemList.appendChild(listItemNode(list, item, refreshPreview, insertItemAfter));
-        refreshPreview();
-        addInput.value = "";
-        scheduleSave();
-    });
-
-    card.querySelector(".card-delete").addEventListener("click", (e) => {
-        e.stopPropagation();
-        armDeleteConfirm(e.currentTarget, () => {
-            data.lists = data.lists.filter(l => l.id !== list.id);
-            expanded.delete(list.id);
-            scheduleSave();
-            card.remove();
-            if (data.lists.length === 0) renderBoard();
-        });
-    });
-
-    attachCardDrag(card, list.id, data.lists);
-    return card;
-}
-
-/* ═══════════════════════════════  EVENTOS  ═══════════════════════════════ */
-
-function eventCardNode(event) {
-    const card = document.createElement("div");
-    card.className = "card" + (expanded.has(event.id) ? " expanded" : "");
-    card.dataset.id = event.id;
-
-    card.innerHTML = `
-        <div class="card-delete" title="Excluir evento">${Icons.svg("x", 12)}</div>
-        <div class="card-header">
-            <span class="card-title" spellcheck="false">${escapeHtml(event.title)}</span>
-            <div class="card-tags">${cardTagsInnerHtml(event.tagIds)}</div>
-        </div>
-        <div class="card-preview"></div>
-        <div class="card-body">
-            <div class="event-fields">
-                <div class="event-row">
-                    <label>Data
-                        <input type="date" class="ev-date" value="${event.date}" />
-                    </label>
-                    <label>Recorrência
-                        <select class="ev-recurrence">
-                            <option value="none"    ${event.recurrence === "none" ? "selected" : ""}>Não se repete</option>
-                            <option value="daily"   ${event.recurrence === "daily" ? "selected" : ""}>Diariamente</option>
-                            <option value="weekly"  ${event.recurrence === "weekly" ? "selected" : ""}>Semanalmente</option>
-                            <option value="monthly" ${event.recurrence === "monthly" ? "selected" : ""}>Mensalmente</option>
-                            <option value="yearly"  ${event.recurrence === "yearly" ? "selected" : ""}>Anualmente</option>
-                        </select>
-                    </label>
-                </div>
-                <div class="event-row">
-                    <label>Início (opcional)
-                        <input type="time" class="ev-start" value="${event.startTime || ""}" />
-                    </label>
-                    <label>Fim (opcional)
-                        <input type="time" class="ev-end" value="${event.endTime || ""}" />
-                    </label>
-                </div>
-                <div class="event-link-row">
-                    <label>Link (opcional)
-                        <input type="text" class="ev-link" placeholder="https://..." value="${escapeHtml(event.link || "")}" />
-                    </label>
-                    <button class="event-open-link" title="Abrir link" ${event.link ? "" : "disabled"}>${Icons.svg("external-link", 12)} Abrir</button>
-                </div>
-            </div>
-            <div class="event-checklist-label">Checklist</div>
-            <div class="item-list"></div>
-            <input class="item-add" type="text" placeholder="+ Adicionar tarefa e pressionar Enter" draggable="false" />
-            <div class="tag-picker"></div>
-            <button class="event-done-btn"></button>
-        </div>
-    `;
-
-    const preview   = card.querySelector(".card-preview");
-    const doneBtn   = card.querySelector(".event-done-btn");
-    const openLink  = card.querySelector(".event-open-link");
-    if (!Array.isArray(event.items)) event.items = []; // eventos criados antes dessa versão não têm items
-    renderTagPicker(card.querySelector(".tag-picker"), event);
-
-    function refreshPreview() {
-        const occ = EventUtils.getNextOccurrence(event);
-        const badge = occurrenceBadge(occ);
-        const timeLabel = event.startTime
-            ? ` · ${event.startTime}${event.endTime ? "–" + event.endTime : ""}`
-            : "";
-        const checklistLabel = event.items.length
-            ? ` · ${event.items.filter(i => i.done).length}/${event.items.length} tarefas`
-            : "";
-        preview.innerHTML =
-            `<span class="event-badge ${badge.cls}">${badge.text}</span>${RECURRENCE_LABELS[event.recurrence] || ""}${timeLabel}${checklistLabel}`;
-
-        const isDone = !occ;
-        doneBtn.innerHTML = isDone
-            ? `${Icons.svg("rotate-ccw", 13)} Desfazer`
-            : `${Icons.svg("check", 13)} Marcar como feito`;
-        doneBtn.classList.toggle("is-done", isDone);
-        doneBtn.dataset.occ = occ || "";
-    }
-    refreshPreview();
-
-    function insertEventItemAfter(afterId) {
-        const idx = event.items.findIndex(i => i.id === afterId);
-        const newItem = { id: newId(), text: "", done: false };
-        event.items.splice(idx === -1 ? event.items.length : idx + 1, 0, newItem);
-        event.updatedAt = now();
-        refreshPreview();
-        scheduleSave();
-
-        const afterLi = checklistEl.querySelector(`.list-item[data-id="${afterId}"]`);
-        const newLi = listItemNode(event, newItem, refreshPreview, insertEventItemAfter);
-        if (afterLi && afterLi.nextSibling) checklistEl.insertBefore(newLi, afterLi.nextSibling);
-        else checklistEl.appendChild(newLi);
-        newLi.querySelector(".item-text").focus();
-    }
-
-    const checklistEl = card.querySelector(".item-list");
-    event.items.forEach(item => checklistEl.appendChild(listItemNode(event, item, refreshPreview, insertEventItemAfter)));
-
-    const eventItemAdd = card.querySelector(".item-add");
-    RichEditor.ligarSetas(eventItemAdd);
-    eventItemAdd.addEventListener("keydown", (e) => {
-        if (e.key !== "Enter") return;
-        e.stopPropagation();
-        const text = eventItemAdd.value.trim();
-        if (!text) return;
-        const item = { id: newId(), text, done: false };
-        event.items.push(item);
-        event.updatedAt = now();
-        checklistEl.appendChild(listItemNode(event, item, refreshPreview, insertEventItemAfter));
-        refreshPreview();
-        eventItemAdd.value = "";
-        scheduleSave();
-    });
-
-    const title = card.querySelector(".card-title");
-
-    function expandEvent() {
-        card.classList.add("expanded");
-        expanded.add(event.id);
-    }
-
-    function collapseEvent() {
-        if (!card.classList.contains("expanded")) return;
-        card.classList.remove("expanded");
-        expanded.delete(event.id);
-        if (title.isContentEditable) commitTitle();
-    }
-
-    const cardHeader = attachHeaderToggle(card, title, expandEvent, collapseEvent);
-
-    function commitTitle() {
-        title.contentEditable = "false";
-        event.title = title.textContent.trim() || "Sem título";
-        title.textContent = event.title;
-        event.updatedAt = now();
-        scheduleSave();
-    }
-
-    title.addEventListener("blur", commitTitle);
-    const dateEl       = card.querySelector(".ev-date");
-    const recurrenceEl = card.querySelector(".ev-recurrence");
-    const startEl      = card.querySelector(".ev-start");
-    const endEl        = card.querySelector(".ev-end");
-    const linkEl       = card.querySelector(".ev-link");
-
-    const fieldOrder = [title, dateEl, recurrenceEl, startEl, endEl, linkEl];
-
-    function focusField(field) {
-        if (field === title) {
-            cardHeader.beginTitleEdit();
-        } else {
-            field.focus();
-            if (typeof field.select === "function") field.select();
-        }
-    }
-
-    function focusNextField(current) {
-        const idx = fieldOrder.indexOf(current);
-        const next = idx === -1 ? null : fieldOrder[idx + 1];
-        if (!next) { current.blur(); return; }
-        focusField(next);
-    }
-
-    title.addEventListener("keydown", (e) => {
-        if (e.key !== "Enter") return;
-        e.preventDefault();
-        e.stopPropagation();
-        focusNextField(title);
-    });
-
-    [dateEl, recurrenceEl, startEl, endEl, linkEl].forEach(field => {
-        field.addEventListener("keydown", (e) => {
-            if (e.key !== "Enter") return;
-            e.preventDefault();
-            e.stopPropagation();
-            focusNextField(field);
-        });
-    });
-
-    fieldOrder.forEach((field, idx) => {
-        field.addEventListener("keydown", (e) => {
-            if (e.key !== "Tab") return;
-            if (!e.shiftKey && idx === fieldOrder.length - 1) {
-                e.preventDefault();
-                focusField(fieldOrder[0]);
-            } else if (e.shiftKey && idx === 0) {
-                e.preventDefault();
-                focusField(fieldOrder[fieldOrder.length - 1]);
-            }
-        });
-    });
-
-    dateEl.addEventListener("change", (e) => {
-        event.date = e.target.value || EventUtils.todayISO();
-        e.target.value = event.date;
-        event.updatedAt = now();
-        refreshPreview();
-        scheduleSave();
-    });
-
-    recurrenceEl.addEventListener("change", (e) => {
-        event.recurrence = e.target.value;
-        event.updatedAt = now();
-        refreshPreview();
-        scheduleSave();
-    });
-
-    startEl.addEventListener("change", (e) => {
-        event.startTime = e.target.value || null;
-        event.updatedAt = now();
-        refreshPreview();
-        scheduleSave();
-    });
-
-    endEl.addEventListener("change", (e) => {
-        event.endTime = e.target.value || null;
-        event.updatedAt = now();
-        refreshPreview();
-        scheduleSave();
-    });
-
-    linkEl.addEventListener("blur", (e) => {
-        event.link = e.target.value.trim() || null;
-        openLink.disabled = !event.link;
-        event.updatedAt = now();
-        scheduleSave();
-    });
-
-    openLink.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (event.link) window.api.send("open-link", event.link);
-    });
-
-    doneBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const occ = doneBtn.dataset.occ;
-        if (occ) {
-            if (!event.completedDates.includes(occ)) event.completedDates.push(occ);
-            tama.aoCompletarTarefa(15, 8);
-        } else {
-            event.completedDates = event.completedDates.filter(d => d !== event.date);
-        }
-        event.updatedAt = now();
-        scheduleSave();
-        renderBoard();
-    });
-
-    card.querySelector(".card-delete").addEventListener("click", (e) => {
-        e.stopPropagation();
-        armDeleteConfirm(e.currentTarget, () => {
-            data.events = data.events.filter(ev => ev.id !== event.id);
-            expanded.delete(event.id);
-            scheduleSave();
-            card.remove();
-            if (data.events.length === 0) renderBoard();
-        });
-    });
-
-    return card;
-}
-
 /* ═══════════════════════════════  RENDER  ════════════════════════════════ */
 
 const EMPTY_MESSAGES = {
@@ -1224,33 +158,27 @@ const EMPTY_MESSAGES = {
     eventos: "Nenhum evento ainda. Crie o primeiro acima."
 };
 
+function itensDaAba() {
+    if (activeTab === "notas") return data.notes;
+    if (activeTab === "listas") return data.lists;
+    return [...data.events].sort(EventUtils.compareByOccurrence);
+}
+
 function renderBoard() {
     board.innerHTML = "";
-    let items;
-    if (activeTab === "notas") items = data.notes;
-    else if (activeTab === "listas") items = data.lists;
-    else items = [...data.events].sort(EventUtils.compareByOccurrence);
-
-    if (searchQuery) {
-        items = items.filter(item => normalizeSearch(item.title).includes(searchQuery));
-    }
+    const items = extras.filtrarPorBusca(itensDaAba());
 
     if (items.length === 0) {
         const msg = document.createElement("div");
         msg.className = "empty-msg";
-        msg.textContent = searchQuery ? "Nenhum card encontrado." : (EMPTY_MESSAGES[activeTab] || EMPTY_MESSAGES.notas);
+        msg.textContent = extras.temBusca() ? "Nenhum card encontrado." : (EMPTY_MESSAGES[activeTab] || EMPTY_MESSAGES.notas);
         board.appendChild(msg);
         return;
     }
 
+    const cards = CARDS_DA_ABA[activeTab];
     const frag = document.createDocumentFragment();
-    items.forEach(item => {
-        let node;
-        if (activeTab === "notas") node = noteCardNode(item);
-        else if (activeTab === "listas") node = listCardNode(item);
-        else node = eventCardNode(item);
-        frag.appendChild(node);
-    });
+    items.forEach(item => frag.appendChild(cards.criarNode(item)));
     board.appendChild(frag);
 }
 
@@ -1287,7 +215,7 @@ window.api.on("set-mode", (mode) => setContainerMode(mode === "collapsed"));
 
 /* ══════════════════════════════  NAVEGAÇÃO POR TECLADO  ══════════════════ */
 
-let selectedIndex = -1; 
+let selectedIndex = -1;
 
 function isEditingContext() {
     const el = document.activeElement;
@@ -1352,8 +280,7 @@ document.addEventListener("keydown", (e) => {
 
     if (e.key === "Escape") {
         e.preventDefault();
-        if (isSearchOpen()) { closeSearch(); return; }
-        if (isTimerOpen()) { closeTimerPanel(); return; }
+        if (extras.fecharAberto()) return;
         if (tama.estaAberto()) { tama.fechar(); return; }
         if (habits.estaAberto()) { habits.fechar(); return; }
         window.api.send("close-widget");
@@ -1364,7 +291,7 @@ document.addEventListener("keydown", (e) => {
 
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
         e.preventDefault();
-        openSearch();
+        extras.abrirBusca();
         return;
     }
 
@@ -1442,7 +369,7 @@ panel.addEventListener("drop", async (e) => {
             content = `Arquivo: ${filePath || file.name}`;
         }
         const title = (file.name.replace(/\.[^.]+$/, "") || file.name).slice(0, 60);
-        data.notes.unshift({ id: newId(), title, content: RichText.fromPlainText(content), createdAt: now(), updatedAt: now() });
+        data.notes.unshift({ id: newId(), title, content: RichText.fromPlainText(content), createdAt: Date.now(), updatedAt: Date.now() });
     }
 
     setActiveTab("notas");
@@ -1451,10 +378,12 @@ panel.addEventListener("drop", async (e) => {
 
 /* ══════════════════════════════  TRAY: CRIAÇÃO RÁPIDA  ═══════════════════ */
 
+const ABA_DO_TIPO = { nota: "notas", lista: "listas", evento: "eventos" };
+
 function runQuickCreate(type) {
-    if (type === "lista") { setActiveTab("listas"); createList(); }
-    else if (type === "evento") { setActiveTab("eventos"); createEvent(); }
-    else { setActiveTab("notas"); createNote(); }
+    const tab = ABA_DO_TIPO[type] || "notas";
+    setActiveTab(tab);
+    CARDS_DA_ABA[tab].criarNovo();
 }
 
 let pendingQuickCreate = null;
@@ -1488,28 +417,20 @@ function flushRemoteUpdates() {
 
 document.addEventListener("focusout", () => setTimeout(flushRemoteUpdates, 0));
 
-function mergeNotesFromMain(incoming) {
-    const localById = new Map(data.notes.map(n => [n.id, n]));
-    data.notes = incoming.map(inc => {
-        const local = localById.get(inc.id);
-        return local && (local.updatedAt || 0) > (inc.updatedAt || 0) ? local : inc;
+function mergeFromMain(local, incoming) {
+    const localById = new Map(local.map(item => [item.id, item]));
+    return incoming.map(inc => {
+        const mine = localById.get(inc.id);
+        return mine && (mine.updatedAt || 0) > (inc.updatedAt || 0) ? mine : inc;
     });
 }
 
 window.api.on("notes-updated", (notes) => {
-    applyRemoteUpdate(() => mergeNotesFromMain(notes));
+    applyRemoteUpdate(() => { data.notes = mergeFromMain(data.notes, notes); });
 });
 
-function mergeEventsFromMain(incoming) {
-    const localById = new Map(data.events.map(e => [e.id, e]));
-    data.events = incoming.map(inc => {
-        const local = localById.get(inc.id);
-        return local && (local.updatedAt || 0) > (inc.updatedAt || 0) ? local : inc;
-    });
-}
-
 window.api.on("events-updated", (events) => {
-    applyRemoteUpdate(() => mergeEventsFromMain(events));
+    applyRemoteUpdate(() => { data.events = mergeFromMain(data.events, events); });
 });
 
 /* ═══════════════════════════════  BOOT  ══════════════════════════════════ */
@@ -1520,9 +441,9 @@ window.api.invoke("get-data").then(loaded => {
     data = {
         notes: [], lists: [], events: [], tags: [], habits: [],
         tamagotchi: {
-        level: 1, xp: 0, vida: 100, fome: 100, carencia: 100, higiene: 100,
-        lastUpdate: Date.now(), lastInteraction: Date.now(), lastCarenciaUpdate: Date.now()
-    },
+            level: 1, xp: 0, vida: 100, fome: 100, carencia: 100, higiene: 100,
+            lastUpdate: Date.now(), lastInteraction: Date.now(), lastCarenciaUpdate: Date.now()
+        },
         ...loaded
     };
     booted = true;
