@@ -31,6 +31,7 @@ let tray               = null;
 let widgetWindow       = null;
 let settingsWindow     = null;
 let quickCaptureWindow = null;
+let quickEventWindow   = null;
 let alarmWindow        = null;
 let saveTimer          = null;
 
@@ -179,6 +180,7 @@ ipcMain.on("save-data", (event, payload) => {
         syncNoteWindows();
     }
     data.lists = Array.isArray(payload.lists) ? payload.lists : data.lists;
+    data.habits = Array.isArray(payload.habits) ? payload.habits : data.habits;
     if (Array.isArray(payload.birthdays)) {
         data.birthdays = mergeMainOwnedList(data.birthdays, payload.birthdays, ["googleEventId", "googleSyncedAt"]);
     }
@@ -259,6 +261,37 @@ ipcMain.on("quick-capture-submit", (event, text) => {
 });
 
 ipcMain.on("quick-capture-cancel", () => hideQuickCapture());
+
+const RECURRENCES = new Set(["none", "daily", "weekly", "monthly", "yearly"]);
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const HH_MM = /^\d{2}:\d{2}$/;
+
+ipcMain.on("quick-event-submit", (event, payload) => {
+    hideQuickEvent();
+    const title = String(payload?.title || "").trim().slice(0, 200);
+    if (!title) return;
+
+    const evt = {
+        id: require("crypto").randomUUID(),
+        title,
+        date: ISO_DATE.test(payload.date) ? payload.date : EventUtils.todayISO(),
+        recurrence: RECURRENCES.has(payload.recurrence) ? payload.recurrence : "none",
+        startTime: HH_MM.test(payload.startTime) ? payload.startTime : null,
+        endTime: HH_MM.test(payload.endTime) ? payload.endTime : null,
+        link: null,
+        completedDates: [],
+        items: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+    };
+    data.events.push(evt);
+    log("[QUICK-EVENT] Evento criado:", evt.title, evt.date, evt.startTime || "");
+    debouncedSaveData();
+    widgetWindow?.webContents.send("events-updated", data.events);
+    if (GoogleAuth.isConnected()) runGoogleSync();
+});
+
+ipcMain.on("quick-event-cancel", () => hideQuickEvent());
 
 ipcMain.on("quit-app", () => { log("[APP] Saída solicitada pelo usuário."); app.quit(); });
 
@@ -463,7 +496,7 @@ function quickCreate(type) {
 /* ═════════════════════════════  CONFIGURAÇÕES  ═══════════════════════════ */
 
 function broadcastSettings() {
-    [widgetWindow, settingsWindow, quickCaptureWindow, alarmWindow, ...noteWindows.values()]
+    [widgetWindow, settingsWindow, quickCaptureWindow, quickEventWindow, alarmWindow, ...noteWindows.values()]
         .filter(w => w && !w.isDestroyed())
         .forEach(w => w.webContents.send("apply-settings", data.settings));
 }
@@ -674,6 +707,51 @@ function hideQuickCapture() {
     }
 }
 
+/* ══════════════════════════════  EVENTO RÁPIDO  ══════════════════════════ */
+
+const QUICK_EVENT_SIZE = { width: 480, height: 112 };
+
+function createQuickEventWindow() {
+    quickEventWindow = new BrowserWindow({
+        ...QUICK_EVENT_SIZE,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        resizable: false,
+        movable: false,
+        skipTaskbar: true,
+        show: false,
+        webPreferences: SECURE_PREFS
+    });
+
+    quickEventWindow.setAlwaysOnTop(true, "screen-saver");
+    quickEventWindow.loadFile(path.join(__dirname, "../html/quickevent.html"));
+    quickEventWindow.on("blur", hideQuickEvent);
+    quickEventWindow.on("closed", () => (quickEventWindow = null));
+    log("[WINDOW] evento rápido criado");
+}
+
+function showQuickEvent() {
+    if (!quickEventWindow || quickEventWindow.isDestroyed()) {
+        createQuickEventWindow();
+    }
+
+    const { workArea } = screen.getPrimaryDisplay();
+    const x = Math.round(workArea.x + (workArea.width - QUICK_EVENT_SIZE.width) / 2);
+    const y = Math.round(workArea.y + workArea.height * 0.3);
+    quickEventWindow.setBounds({ x, y, ...QUICK_EVENT_SIZE });
+
+    quickEventWindow.webContents.send("reset");
+    quickEventWindow.show();
+    quickEventWindow.focus();
+}
+
+function hideQuickEvent() {
+    if (quickEventWindow && !quickEventWindow.isDestroyed()) {
+        quickEventWindow.hide();
+    }
+}
+
 /* ═════════════════════════════  ATALHOS GLOBAIS  ═════════════════════════ */
 
 function toggleWidgetVisibility() {
@@ -692,10 +770,11 @@ function toggleWidgetVisibility() {
 function registerShortcuts() {
     globalShortcut.unregisterAll();
 
-    const { toggleWidget, quickCapture, newNoteWindow } = data.settings.shortcuts;
+    const { toggleWidget, quickCapture, quickEvent, newNoteWindow } = data.settings.shortcuts;
     const bindings = [
         [toggleWidget, toggleWidgetVisibility],
         [quickCapture, showQuickCapture],
+        [quickEvent, showQuickEvent],
         [newNoteWindow, createNoteInWindow]
     ];
 
@@ -927,6 +1006,7 @@ function createTray() {
     tray.setContextMenu(Menu.buildFromTemplate([
         { label: "Abrir Note-Chan", click: openWidgetExpanded },
         { label: "Captura rápida", click: showQuickCapture },
+        { label: "Evento rápido", click: showQuickEvent },
         { type: "separator" },
         { label: "Nova nota",  click: () => quickCreate("nota") },
         { label: "Nova nota em janela", click: createNoteInWindow },
@@ -984,6 +1064,7 @@ app.whenReady().then(() => {
     createTray();
     createWidgetWindow();
     createQuickCaptureWindow();
+    createQuickEventWindow();
     createAlarmWindow();
     registerShortcuts();
 

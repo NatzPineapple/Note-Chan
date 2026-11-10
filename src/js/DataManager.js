@@ -28,6 +28,7 @@ function defaultData() {
         events: [],
         birthdays: [],
         tags: [],
+        habits: [],
         googleSync: {
             syncToken: null,       
             lastSyncAt: null,
@@ -54,6 +55,7 @@ function defaultData() {
             shortcuts: {
                 toggleWidget: "Control+Alt+N",
                 quickCapture: "Control+Alt+Q",
+                quickEvent: "Control+Alt+E",
                 newNoteWindow: "Control+Alt+J"
             },
             editor: { fontSize: 15, indentSize: 4 },

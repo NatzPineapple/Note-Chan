@@ -3,7 +3,7 @@
 Log.iniciar("widget");
 
 let data = {
-    notes: [], lists: [], events: [], tags: [],
+    notes: [], lists: [], events: [], tags: [], habits: [],
     tamagotchi: {
         level: 1, xp: 0, vida: 100, fome: 100, carencia: 100, higiene: 100,
         lastUpdate: Date.now(), lastInteraction: Date.now(), lastCarenciaUpdate: Date.now()
@@ -45,6 +45,7 @@ function scheduleSave() {
             notes: data.notes,
             lists: data.lists,
             events: data.events,
+            habits: data.habits,
             widget: { activeTab }
         });
     }, 400);
@@ -143,6 +144,59 @@ tabButtons.forEach(btn => {
     btn.addEventListener("click", () => setActiveTab(btn.dataset.tab));
 });
 
+/* ═══════════════════════  DICA DE ATALHOS NAS ABAS  ═══════════════════════ */
+
+const ATALHOS_DA_ABA = {
+    notas: [["Captura rápida", "quickCapture"], ["Nova nota em janela", "newNoteWindow"]],
+    eventos: [["Evento rápido", "quickEvent"]]
+};
+const DICA_DELAY_MS = 350;
+
+const dicaEl = document.createElement("div");
+dicaEl.id = "shortcut-tip";
+container.appendChild(dicaEl);
+let dicaTimer = null;
+
+function teclasHtml(acelerador) {
+    if (!acelerador) return `<span class="tip-none">sem atalho</span>`;
+    return acelerador
+        .replace("Control", "Ctrl").replace("Super", "Win")
+        .split("+")
+        .map(tecla => `<kbd>${escapeHtml(tecla)}</kbd>`)
+        .join("");
+}
+
+function mostrarDica(btn) {
+    const atalhos = data.settings?.shortcuts || {};
+    dicaEl.innerHTML = `<div class="tip-title">Atalhos globais</div>` + ATALHOS_DA_ABA[btn.dataset.tab]
+        .map(([rotulo, chave]) => `<div class="tip-row"><span>${rotulo}</span><span class="tip-keys">${teclasHtml(atalhos[chave])}</span></div>`)
+        .join("");
+
+    dicaEl.classList.add("visible");
+    const alvo = btn.getBoundingClientRect();
+    const caixa = container.getBoundingClientRect();
+    const largura = dicaEl.offsetWidth;
+    const centro = alvo.left - caixa.left + alvo.width / 2;
+    dicaEl.style.left = `${Math.max(6, Math.min(centro - largura / 2, caixa.width - largura - 6))}px`;
+    dicaEl.style.top = `${alvo.bottom - caixa.top + 6}px`;
+    dicaEl.style.setProperty("--seta-x", `${centro - parseFloat(dicaEl.style.left)}px`);
+}
+
+function esconderDica() {
+    clearTimeout(dicaTimer);
+    dicaEl.classList.remove("visible");
+}
+
+tabButtons.forEach(btn => {
+    if (!ATALHOS_DA_ABA[btn.dataset.tab]) return;
+    btn.addEventListener("mouseenter", () => {
+        clearTimeout(dicaTimer);
+        dicaTimer = setTimeout(() => mostrarDica(btn), DICA_DELAY_MS);
+    });
+    btn.addEventListener("mouseleave", esconderDica);
+    btn.addEventListener("mousedown", esconderDica);
+});
+
 /* ═══════════════════════════════  BUSCA  ══════════════════════════════════ */
 
 let searchQuery = "";
@@ -161,6 +215,7 @@ function isSearchOpen() {
 function openSearch() {
     closeTimerPanel();
     tama.fechar();
+    habits.fechar();
     searchBar.classList.add("open");
     searchInput.focus();
     searchInput.select();
@@ -373,6 +428,7 @@ timerResetBtn.addEventListener("click", resetTimer);
 function openTimerPanel() {
     closeSearch();
     tama.fechar();
+    habits.fechar();
     timerPanel.classList.add("open");
 }
 
@@ -406,7 +462,16 @@ const tama = TamaPet.criar({
     data,
     container,
     estaPronto: () => booted,
-    aoAbrir: () => { closeSearch(); closeTimerPanel(); }
+    aoAbrir: () => { closeSearch(); closeTimerPanel(); habits.fechar(); }
+});
+
+/* ═════════════════════════════  MAPA DE HÁBITOS  ═════════════════════════ */
+const habits = HabitTracker.criar({
+    obterDados: () => data,
+    container,
+    salvar: scheduleSave,
+    aoAbrir: () => { closeSearch(); closeTimerPanel(); tama.fechar(); },
+    aoCompletar: () => tama.aoCompletarTarefa(8, 4)
 });
 
 /* ═════════════════════════════  CRIAÇÃO  ═════════════════════════════════ */
@@ -520,21 +585,10 @@ function attachCardDrag(card, id, itemsArray) {
 }
 
 /* ═════════════  CABEÇALHO DO CARD: ABRIR, FECHAR E RENOMEAR  ══════════════ */
-const DBLCLICK_GRACE_MS = 220;
-
 function attachHeaderToggle(card, title, expand, collapse) {
-    let pendingCollapse = null;
-
-    function cancelPendingCollapse() {
-        if (pendingCollapse === null) return;
-        clearTimeout(pendingCollapse);
-        pendingCollapse = null;
-    }
-
     RichEditor.ligarSetas(title);
 
     function beginTitleEdit() {
-        cancelPendingCollapse();
         if (!card.classList.contains("expanded")) expand(false);
         title.contentEditable = "true";
         title.focus();
@@ -544,22 +598,13 @@ function attachHeaderToggle(card, title, expand, collapse) {
     card.querySelector(".card-header").addEventListener("click", (e) => {
         if (e.detail > 1) return; // 2º clique do duplo-clique — quem trata é o dblclick
         if (!card.classList.contains("expanded")) { expand(true); return; }
-        if (title.contains(e.target)) {
-            cancelPendingCollapse();
-            pendingCollapse = setTimeout(() => {
-                pendingCollapse = null;
-                collapse();
-            }, DBLCLICK_GRACE_MS);
-        } else {
-            collapse();
-        }
+        collapse();
     });
 
     card.addEventListener("focusout", () => {
         setTimeout(() => {
             if (card.contains(document.activeElement)) return;
-            if (clickStartedInside(card)) return; 
-            cancelPendingCollapse();
+            if (clickStartedInside(card)) return;
             collapse();
         }, 0);
     });
@@ -793,15 +838,13 @@ function listCardNode(list) {
     card.className = "card" + (expanded.has(list.id) ? " expanded" : "");
     card.dataset.id = list.id;
 
-    const done = list.items.filter(i => i.done).length;
-
     card.innerHTML = `
         <div class="card-delete" draggable="false" title="Excluir lista">${Icons.svg("x", 12)}</div>
         <div class="card-header">
             <span class="card-title" spellcheck="false" draggable="false">${escapeHtml(list.title)}</span>
             <div class="card-tags">${cardTagsInnerHtml(list.tagIds)}</div>
         </div>
-        <div class="card-preview">${done}/${list.items.length} concluídos</div>
+        <div class="card-preview"></div>
         <div class="card-body">
             <div class="item-list"></div>
             <input class="item-add" type="text" placeholder="+ Adicionar item e pressionar Enter" draggable="false" />
@@ -812,9 +855,14 @@ function listCardNode(list) {
     renderTagPicker(card.querySelector(".tag-picker"), list);
 
     function refreshPreview() {
-        card.querySelector(".card-preview").textContent =
-            `${list.items.filter(i => i.done).length}/${list.items.length} concluídos`;
+        const done = list.items.filter(i => i.done).length;
+        const allDone = list.items.length > 0 && done === list.items.length;
+        card.classList.toggle("list-done", allDone);
+        card.querySelector(".card-preview").innerHTML =
+            (allDone ? `<span class="event-badge done">Concluída</span>` : "") +
+            `${done}/${list.items.length} concluídos`;
     }
+    refreshPreview();
 
     // Enter num item não vazio continua a lista: cria um item novo logo
     // abaixo do de origem e move o foco pra lá (estilo Notion/Todoist).
@@ -1307,9 +1355,12 @@ document.addEventListener("keydown", (e) => {
         if (isSearchOpen()) { closeSearch(); return; }
         if (isTimerOpen()) { closeTimerPanel(); return; }
         if (tama.estaAberto()) { tama.fechar(); return; }
+        if (habits.estaAberto()) { habits.fechar(); return; }
         window.api.send("close-widget");
         return;
     }
+
+    if (habits.estaAberto()) return;
 
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
         e.preventDefault();
@@ -1467,7 +1518,7 @@ const VALID_TABS = new Set(["notas", "listas", "eventos"]);
 
 window.api.invoke("get-data").then(loaded => {
     data = {
-        notes: [], lists: [], events: [], tags: [],
+        notes: [], lists: [], events: [], tags: [], habits: [],
         tamagotchi: {
         level: 1, xp: 0, vida: 100, fome: 100, carencia: 100, higiene: 100,
         lastUpdate: Date.now(), lastInteraction: Date.now(), lastCarenciaUpdate: Date.now()
@@ -1480,6 +1531,7 @@ window.api.invoke("get-data").then(loaded => {
     const savedTab = data.widget?.activeTab;
     setActiveTab(VALID_TABS.has(savedTab) ? savedTab : "notas");
     tama.iniciar();
+    habits.atualizarAviso();
 
     if (pendingQuickCreate) {
         const type = pendingQuickCreate;

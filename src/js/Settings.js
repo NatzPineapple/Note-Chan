@@ -15,6 +15,7 @@ const GRUPOS_ATALHO = {
     shortcuts: {
         toggleWidget: document.getElementById("rec-toggleWidget"),
         quickCapture: document.getElementById("rec-quickCapture"),
+        quickEvent: document.getElementById("rec-quickEvent"),
         newNoteWindow: document.getElementById("rec-newNoteWindow")
     },
     editorShortcuts: {
@@ -298,6 +299,13 @@ document.getElementById("settings-minbtn").addEventListener("click", () => {
     window.api.send("settings-minimize");
 });
 document.getElementById("settings-closebtn").addEventListener("click", () => {
+    window.api.send("close-settings");
+});
+
+window.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || e.defaultPrevented) return;
+    e.preventDefault();
+    document.activeElement?.blur();
     window.api.send("close-settings");
 });
 
