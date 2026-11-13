@@ -15,6 +15,16 @@
     "appId": "com.renato.notechan",
     "productName": "Note-Chan",
     "asar": true,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "enableCookieEncryption": true,
+      "grantFileProtocolExtraPrivileges": true,
+      "loadBrowserProcessSpecificV8Snapshot": false
+    },
     "directories": {
       "output": "dist"
     },
