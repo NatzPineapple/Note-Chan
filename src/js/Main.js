@@ -290,7 +290,8 @@ Ipc.ouvir("save-settings", ["settings"], (event, bruto) => {
         editorShortcuts: { ...data.settings.editorShortcuts, ...settings.editorShortcuts },
         alarm: { ...data.settings.alarm, ...settings.alarm }
     };
-    log("[SETTINGS] Atualizado:", JSON.stringify(settings));
+    // Só QUAIS chaves mudaram, não os valores (ver política em Logger.js).
+    log("[SETTINGS] Atualizado:", chavesDe(settings).join(", "));
     debouncedSaveData();
     broadcastSettings();
     if (shortcutsChanged) registerShortcuts();
@@ -319,7 +320,7 @@ Ipc.ouvir("quick-capture-submit", ["quickcapture"], (event, text) => {
         updatedAt: Date.now()
     };
     data.notes.unshift(note);
-    log("[QUICK-CAPTURE] Nota criada:", note.title);
+    log("[QUICK-CAPTURE] Nota criada:", note.id);
     debouncedSaveData();
     widgetWindow?.webContents.send("notes-updated", data.notes);
 });
@@ -350,7 +351,7 @@ Ipc.ouvir("quick-event-submit", ["quickevent"], (event, payload) => {
         updatedAt: Date.now()
     };
     data.events.push(evt);
-    log("[QUICK-EVENT] Evento criado:", evt.title, evt.date, evt.startTime || "");
+    log("[QUICK-EVENT] Evento criado:", evt.id);
     debouncedSaveData();
     widgetWindow?.webContents.send("events-updated", data.events);
     google.sincronizarSeConectado();
@@ -394,9 +395,29 @@ function urlExternaSegura(url) {
     }
 }
 
+// Para o log: telas do app aparecem inteiras (são caminhos fixos nossos);
+// qualquer outra URL vira só esquema + host — o caminho e a query de um link
+// podem carregar dado pessoal ou token, e um file:// carrega pastas do usuário.
+function resumoUrl(url) {
+    try {
+        const u = new URL(String(url));
+        if (u.protocol === "app:") return u.origin + u.pathname;
+        if (u.protocol === "http:" || u.protocol === "https:") return `${u.protocol}//${u.host}/…`;
+        return `${u.protocol}(…)`;
+    } catch {
+        return "(endereço inválido)";
+    }
+}
+
+// ["theme", "alarm.volume", ...] — nomes das chaves alteradas, sem valores.
+function chavesDe(obj, prefixo = "") {
+    return Object.entries(obj).flatMap(([k, v]) =>
+        v && typeof v === "object" && !Array.isArray(v) ? chavesDe(v, prefixo + k + ".") : [prefixo + k]);
+}
+
 function abrirNoNavegador(url, contexto) {
     const alvo = urlExternaSegura(url);
-    if (!alvo) { warn("[SECURITY] Endereço externo recusado", contexto, url); return false; }
+    if (!alvo) { warn("[SECURITY] Endereço externo recusado", contexto, resumoUrl(url)); return false; }
     shell.openExternal(alvo);
     return true;
 }
@@ -878,14 +899,14 @@ function showNextAlarm() {
 }
 
 function fireAlarm(evt) {
-    log("[ALARM] Tocando:", evt.title, "às", evt.startTime);
+    log("[ALARM] Tocando:", evt.id, "às", evt.startTime);
     alarmQueue.push({ id: evt.id, title: evt.title, startTime: evt.startTime });
     if (!alarmShowing) showNextAlarm();
 }
 
 Ipc.ouvir("alarm-stop", ["alarm"], () => {
     const evt = alarmQueue.shift();
-    if (evt) log("[ALARM] Parado:", evt.title);
+    if (evt) log("[ALARM] Parado:", evt.id);
     alarmWindow?.hide();
     showNextAlarm();
 });
@@ -894,7 +915,7 @@ Ipc.ouvir("alarm-snooze", ["alarm"], () => {
     const evt = alarmQueue.shift();
     alarmWindow?.hide();
     if (evt) {
-        log("[ALARM] Soneca:", evt.title, `— toca de novo em ${SNOOZE_MS / 60000} min`);
+        log("[ALARM] Soneca:", evt.id, `— toca de novo em ${SNOOZE_MS / 60000} min`);
         setTimeout(() => fireAlarm(evt), SNOOZE_MS);
     }
     showNextAlarm();
@@ -907,7 +928,7 @@ Ipc.ouvir("alarm-snooze", ["alarm"], () => {
 function clearLegacyCompletions() {
     const changed = EventUtils.clearLegacyCompletions(data.events);
     if (changed.length === 0) return;
-    log("[EVENTS] Marcações antigas de concluído removidas:", changed.map(e => e.title).join(", "));
+    log("[EVENTS] Marcações antigas de concluído removidas:", changed.map(e => e.id).join(", "));
     debouncedSaveData();
     widgetWindow?.webContents.send("events-updated", data.events);
 }
@@ -932,7 +953,7 @@ function checkEventNotifications() {
         if (diff > NOTIFY_GRACE_MS) {
             evt.lastNotified = occ;
             changed = true;
-            log("[EVENTS] Ocorrência muito atrasada, alarme suprimido:", evt.title, occ);
+            log("[EVENTS] Ocorrência muito atrasada, alarme suprimido:", evt.id, occ);
         } else if (data.settings.alarm.enabled) {
             evt.lastNotified = occ;
             changed = true;
@@ -1080,11 +1101,11 @@ app.on("web-contents-created", (event, contents) => {
     // para app://, para nenhuma tela virar outra com o preload da primeira.
     const bloquear = (mensagem) => (e, url) => {
         e.preventDefault();
-        warn(`[SECURITY] ${mensagem}:`, url);
+        warn(`[SECURITY] ${mensagem}:`, resumoUrl(url));
     };
     contents.on("will-navigate", bloquear("Navegação bloqueada"));
     contents.on("will-frame-navigate", (e) => {
-        if (!e.isMainFrame) { e.preventDefault(); warn("[SECURITY] Navegação de frame bloqueada:", e.url); }
+        if (!e.isMainFrame) { e.preventDefault(); warn("[SECURITY] Navegação de frame bloqueada:", resumoUrl(e.url)); }
     });
     contents.on("will-redirect", bloquear("Redirecionamento bloqueado"));
 
@@ -1098,7 +1119,7 @@ app.on("web-contents-created", (event, contents) => {
     });
     contents.on("did-fail-load", (e, codigo, descricao, url) => {
         if (codigo === -3) return;
-        warn("[FALHA] Carregamento falhou:", url, "—", descricao, codigo);
+        warn("[FALHA] Carregamento falhou:", resumoUrl(url), "—", descricao, codigo);
     });
 });
 
@@ -1147,9 +1168,11 @@ app.on("will-quit", () => {
     globalShortcut.unregisterAll();
     if (saveTimer) clearTimeout(saveTimer);
     saveDataSync(data);
+    // Registra ANTES de despejar: depois do flushSync o processo termina e
+    // uma linha nova não teria tempo de ser gravada.
+    log("=== Note-Chan encerrado ===");
     const { flushSync } = require("./Logger");
     flushSync();
-    log("=== Note-Chan encerrado ===");
 });
 
 app.on("window-all-closed", () => { /* intencionalmente vazio */ });

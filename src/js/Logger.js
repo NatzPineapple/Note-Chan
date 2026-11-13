@@ -66,8 +66,43 @@
     const PATHS = require("./Paths");
     const logFile = PATHS.logFile;
 
-    const MAX_LOG_BYTES = 2 * 1024 * 1024;  
-    const MAX_QUEUE     = 5000;              
+    const MAX_LOG_BYTES = 2 * 1024 * 1024;
+    const MAX_QUEUE     = 5000;
+
+    /* ─────────────────────  Higienização (rede de segurança)  ─────────────── */
+    // Política do log: registrar O QUE aconteceu, não o CONTEÚDO do usuário.
+    // O código chama o log com ids (de nota, evento, ...) em vez de títulos e
+    // nomes. Esta etapa é a rede de segurança para o que escapar — mensagens de
+    // exceção, pilhas de chamada, linhas vindas das telas:
+    //   - pasta do usuário (C:\Users\<nome>)  → %USERPROFILE%
+    //   - endereços de e-mail                 → <e-mail>
+    //   - tokens do Google / "Bearer ..."     → <token>
+    // E impede que uma mensagem forje linhas: toda linha de continuação começa
+    // recuada, então só uma entrada de verdade começa com "[".
+    const os = require("os");
+
+    function escaparRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+    const PASTA_USUARIO = (() => {
+        const home = os.homedir();
+        // Qualquer X:\Users\<nome> (inclui o nome curto 8.3, como DESENV~1, que
+        // o Windows usa em caminhos temporários e não bate com homedir()), e
+        // também a pasta pessoal exata, onde quer que ela esteja.
+        const variantes = ["[A-Za-z]:[\\\\/]Users[\\\\/][^\\\\/\\s\"'<>|:*?]+"];
+        if (home) variantes.push(...[home, home.replace(/\\/g, "/")].map(escaparRegex));
+        return new RegExp(variantes.join("|"), "gi");
+    })();
+
+    const RE_EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+/g;
+    const RE_TOKENS = /\b(ya29\.[\w-]+|1\/\/[\w-]{10,}|Bearer\s+[\w.~+\/-]+=*)/g;
+
+    function higienizar(texto) {
+        let t = String(texto);
+        if (PASTA_USUARIO) t = t.replace(PASTA_USUARIO, "%USERPROFILE%");
+        t = t.replace(RE_TOKENS, "<token>");
+        t = t.replace(RE_EMAIL, "<e-mail>");
+        return t.replace(/\r\n|\r|\n/g, "\n    ");
+    }
 
     let queue = [];
     let flushing = false;
@@ -92,7 +127,7 @@
     }
 
     function append(nivel, origem, texto) {
-        const corpo = `[${nivel}] [${origem}] ${texto}`;
+        const corpo = `[${nivel}] [${origem}] ${higienizar(texto)}`;
         if (corpo === ultimoCorpo) { repetidas++; return; }
         despejarRepetidas();
         ultimoCorpo = corpo;
@@ -116,22 +151,36 @@
         }
     }
 
+    // As linhas só saem da fila DEPOIS de gravadas. Antes saíam antes, e o
+    // flushSync() da saída do app encontrava a fila vazia: o que estava sendo
+    // gravado em segundo plano se perdia com o processo (por isso "=== Note-Chan
+    // encerrado ===" e avisos dos últimos instantes nunca chegavam ao arquivo).
+    // Se o app fechar no meio de uma gravação, o pior caso agora é uma linha
+    // duplicada — melhor do que uma linha a menos num registro de auditoria.
+    // geracao muda a cada flushSync(): se ele esvaziou a fila enquanto uma
+    // gravação assíncrona estava em andamento, essa gravação não pode tirar
+    // nada da fila depois — o que estiver lá agora são linhas novas.
+    let geracao = 0;
+
     async function flush() {
         flushing = true;
         while (queue.length) {
-            const chunk = queue.splice(0, queue.length).join("");
+            const n = queue.length;
+            const minhaGeracao = geracao;
             try {
                 await rotateIfNeeded();
-                await fsp.appendFile(logFile, chunk, "utf8");
+                await fsp.appendFile(logFile, queue.slice(0, n).join(""), "utf8");
             } catch (e) {
                 console.error("[LOGGER] Falha ao gravar log:", e.message);
             }
+            if (minhaGeracao === geracao) queue.splice(0, n);
         }
         flushing = false;
     }
 
     function flushSync() {
         despejarRepetidas();
+        geracao++;
         if (!queue.length) return;
         try {
             fs.appendFileSync(logFile, queue.splice(0, queue.length).join(""), "utf8");

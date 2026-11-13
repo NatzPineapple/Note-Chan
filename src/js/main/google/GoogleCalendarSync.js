@@ -3,6 +3,7 @@ const crypto = require("crypto");
 const GoogleAuth = require("./GoogleAuth");
 const EventUtils = require("../../EventUtils");
 const { warn } = require("../../Logger");
+const { resumoErroGoogle } = require("./ErroGoogle");
 
 const CALENDAR_ID = "primary";
 const API_BASE = "https://www.googleapis.com/calendar/v3";
@@ -212,7 +213,7 @@ async function processPendingDeletes(data) {
                 // Recusa definitiva (ex.: aniversário de contato, que só o Google
                 // Contatos apaga) — tentar de novo a cada sync não adianta.
                 done.add(id);
-                warn("[GOOGLE] Google recusou excluir o evento, removido da fila:", id, res.status, await res.text().catch(() => ""));
+                warn("[GOOGLE] Google recusou excluir o evento, removido da fila:", id, await resumoErroGoogle(res));
             } else warn("[GOOGLE] Falha ao excluir evento remoto (fica na fila)", id, res.status);
         } catch (e) {
             warn("[GOOGLE] Erro ao excluir evento remoto (fica na fila)", id, e.message);
@@ -238,7 +239,7 @@ async function listGoogleEvents(data) {
                 err.code = "SYNC_TOKEN_INVALID";
                 throw err;
             }
-            if (!res.ok) throw new Error(`Falha ao listar eventos do Google (${res.status}): ${await res.text()}`);
+            if (!res.ok) throw new Error(`Falha ao listar eventos do Google (${await resumoErroGoogle(res)})`);
             const json = await res.json();
             items = items.concat(json.items || []);
             pageToken = json.nextPageToken || null;
@@ -351,12 +352,12 @@ async function pushNewLocalItems(data) {
                 method: "POST",
                 body: JSON.stringify(eventToGooglePayload(evt))
             });
-            if (!res.ok) { warn("[GOOGLE] Falha ao criar evento", evt.title, res.status); continue; }
+            if (!res.ok) { warn("[GOOGLE] Falha ao criar evento", evt.id, await resumoErroGoogle(res)); continue; }
             evt.googleEventId = (await res.json()).id;
             evt.googleSyncedAt = Date.now();
             evt.foreign = false; 
         } catch (e) {
-            warn("[GOOGLE] Erro ao criar evento", evt.title, e.message);
+            warn("[GOOGLE] Erro ao criar evento", evt.id, e.message);
         }
     }
 
@@ -367,11 +368,11 @@ async function pushNewLocalItems(data) {
                 method: "POST",
                 body: JSON.stringify(birthdayToGooglePayload(b))
             });
-            if (!res.ok) { warn("[GOOGLE] Falha ao criar aniversário", b.name, res.status); continue; }
+            if (!res.ok) { warn("[GOOGLE] Falha ao criar aniversário", b.id, await resumoErroGoogle(res)); continue; }
             b.googleEventId = (await res.json()).id;
             b.googleSyncedAt = Date.now();
         } catch (e) {
-            warn("[GOOGLE] Erro ao criar aniversário", b.name, e.message);
+            warn("[GOOGLE] Erro ao criar aniversário", b.id, e.message);
         }
     }
 }
@@ -383,7 +384,7 @@ async function patchItem(googleEventId, payload, label) {
     });
     if (res.ok) return true;
     if (res.status === 404 || res.status === 410) return null;
-    warn("[GOOGLE] Falha ao atualizar", label, res.status, await res.text().catch(() => ""));
+    warn("[GOOGLE] Falha ao atualizar", label, await resumoErroGoogle(res));
     return false;
 }
 
@@ -404,11 +405,11 @@ async function pushLocalChanges(data) {
         // aceitam mudar título/horário pela API (400). Ficam só leitura de lá.
         if (evt.googleType && evt.googleType !== "default") { evt.googleSyncedAt = evt.updatedAt; continue; }
         try {
-            const result = await patchItem(evt.googleEventId, eventPatchPayload(evt), evt.title);
+            const result = await patchItem(evt.googleEventId, eventPatchPayload(evt), evt.id);
             if (result === null) { evt.googleEventId = null; evt.googleSyncedAt = 0; }
             else if (result) evt.googleSyncedAt = Date.now();
         } catch (e) {
-            warn("[GOOGLE] Erro ao atualizar evento", evt.title, e.message);
+            warn("[GOOGLE] Erro ao atualizar evento", evt.id, e.message);
         }
     }
 
@@ -418,11 +419,11 @@ async function pushLocalChanges(data) {
         // deve reescrever o evento de lá.
         if (b.foreign) { b.googleSyncedAt = b.updatedAt; continue; }
         try {
-            const result = await patchItem(b.googleEventId, birthdayToGooglePayload(b), b.name);
+            const result = await patchItem(b.googleEventId, birthdayToGooglePayload(b), b.id);
             if (result === null) { b.googleEventId = null; b.googleSyncedAt = 0; }
             else if (result) b.googleSyncedAt = Date.now();
         } catch (e) {
-            warn("[GOOGLE] Erro ao atualizar aniversário", b.name, e.message);
+            warn("[GOOGLE] Erro ao atualizar aniversário", b.id, e.message);
         }
     }
 }

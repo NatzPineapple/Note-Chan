@@ -7,6 +7,7 @@ const fs = require("fs");
 const path = require("path");
 const PATHS = require("../../Paths");
 const { log, warn } = require("../../Logger");
+const { resumoErroGoogle } = require("./ErroGoogle");
 
 let config = null;
 try {
@@ -127,7 +128,7 @@ async function loadStoredToken() {
             }
         }
 
-        if (refreshToken) log("[GOOGLE] Sessão restaurada:", userEmail || "(sem e-mail salvo)");
+        if (refreshToken) log("[GOOGLE] Sessão restaurada.");
         if (temEscopoAmplo()) warn("[GOOGLE] A sessão salva tem permissão de agenda completa; reconectar reduz para só eventos.");
     } catch (e) {
         warn("[GOOGLE] Falha ao carregar sessão salva:", e.message);
@@ -189,7 +190,7 @@ async function exchangeCode(code, codeVerifier, redirectUri) {
             grant_type: "authorization_code"
         })
     });
-    if (!res.ok) throw new Error(`Falha ao trocar código por token (${res.status}): ${await res.text()}`);
+    if (!res.ok) throw new Error(`Falha ao trocar código por token (${await resumoErroGoogle(res)})`);
     return res.json();
 }
 
@@ -263,7 +264,7 @@ function startOAuthFlow() {
                     await persistToken();
                     settled = true;
                     clearTimeout(timeoutHandle);
-                    log("[GOOGLE] Conectado:", userEmail || "(e-mail não obtido)");
+                    log("[GOOGLE] Conectado.");
                     resolve({ email: userEmail });
                 } catch (e) {
                     settled = true;
@@ -311,12 +312,12 @@ async function refreshAccessToken() {
         })
     });
     if (!res.ok) {
-        const text = await res.text();
+        const resumo = await resumoErroGoogle(res);
         if (res.status === 400 || res.status === 401) {
-            warn("[GOOGLE] Token de renovação inválido, desconectando:", text);
+            warn("[GOOGLE] Token de renovação inválido, desconectando:", resumo);
             clearToken();
         }
-        throw new Error(`Falha ao renovar token (${res.status}): ${text}`);
+        throw new Error(`Falha ao renovar token (${resumo})`);
     }
     const tokens = await res.json();
     accessToken = tokens.access_token;

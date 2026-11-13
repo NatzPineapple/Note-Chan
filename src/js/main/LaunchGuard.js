@@ -38,16 +38,12 @@ function verificar() {
     const estranhos = argumentosEstranhos(process.argv);
     if (estranhos.length === 0) return true;
 
-    // Registra para quem investigar depois. Gravação síncrona e direta no
-    // arquivo: o Logger grava em segundo plano e o app.exit() logo abaixo
-    // mataria o processo antes de a linha chegar ao disco.
-    const texto = estranhos.map(a => a.slice(0, 80)).join(" ");
-    console.error("[SECURITY] Abertura recusada — argumentos não permitidos:", texto);
+    // Registra para quem investigar depois (o Logger higieniza caminhos e
+    // e-mails). flushSync: o app.exit() logo abaixo encerra o processo.
     try {
-        const fs = require("fs");
-        const PATHS = require("../Paths");
-        fs.appendFileSync(PATHS.logFile,
-            `[${new Date().toISOString()}] [WARN ] [main] [SECURITY] Abertura recusada — argumentos não permitidos: ${texto}\n`, "utf8");
+        const { warn, flushSync } = require("../Logger");
+        warn("[SECURITY] Abertura recusada — argumentos não permitidos:", estranhos.map(a => a.slice(0, 80)).join(" "));
+        flushSync();
     } catch { /* sem log, mas recusa do mesmo jeito */ }
 
     // exit, não quit: não espera o ciclo de vida do app nem cria janela.
