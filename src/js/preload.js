@@ -23,6 +23,18 @@ const INVOKE = new Set([
     "google-auth-status", "google-auth-start", "google-disconnect", "google-sync-now"
 ]);
 
+// Soltar um arquivo numa janela faz o Chromium abrir esse arquivo no lugar da
+// tela. A navegação já é barrada no processo principal; aqui cortamos na
+// origem, em todas as janelas. Só arquivos: arrastar texto entre campos segue
+// funcionando. Quem trata arquivos (o painel do widget) recebe o evento antes,
+// porque este ouvinte fica no window e roda por último na propagação.
+function temArquivos(e) {
+    return !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+}
+for (const tipo of ["dragover", "drop"]) {
+    window.addEventListener(tipo, (e) => { if (temArquivos(e)) e.preventDefault(); });
+}
+
 contextBridge.exposeInMainWorld("api", {
     send: (channel, payload) => {
         if (!SEND.has(channel)) throw new Error(`Canal bloqueado: ${channel}`);

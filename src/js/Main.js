@@ -2,6 +2,11 @@
 const { app, Tray, Menu, BrowserWindow, ipcMain, nativeImage, screen, shell, globalShortcut, Notification } = require("electron");
 const path = require("path");
 
+// Primeira coisa: recusa abrir com flags que o app não usa (ver LaunchGuard.js).
+const LaunchGuard = require("./main/LaunchGuard");
+// app.exit() não interrompe este arquivo na hora, então o return é necessário.
+if (!LaunchGuard.verificar()) return;
+
 const PATHS = require("./Paths");
 
 const { loadData, saveData, saveDataSync } = require("./DataManager");
@@ -11,6 +16,7 @@ const GoogleIpc = require("./main/google/GoogleIpc");
 const Features = require("./Features");
 const UpdateChecker = require("./UpdateChecker");
 const RichText = require("./RichText");
+const AppProtocol = require("./main/AppProtocol");
 
 /* ═══════════════════════════  INSTÂNCIA ÚNICA  ═══════════════════════════ */
 if (!app.requestSingleInstanceLock()) {
@@ -20,6 +26,9 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 capturarFalhasDoProcesso();
+
+// Tem que ser registrado antes do app ficar pronto (exigência do Electron).
+AppProtocol.registrarEsquema();
 
 log("=== Note-Chan iniciado === versão", app.getVersion());
 log("[PATHS] userData:", PATHS.userData);
@@ -438,7 +447,7 @@ function createWidgetWindow() {
 
     widgetWindow.setAlwaysOnTop(true, "screen-saver");
     widgetWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    widgetWindow.loadFile(path.join(__dirname, "../html/widget.html"));
+    widgetWindow.loadURL(AppProtocol.paginaDoApp("widget.html"));
 
     if (!app.isPackaged) {
         widgetWindow.webContents.openDevTools({ mode: "detach" });
@@ -498,7 +507,7 @@ function createSettingsWindow() {
         webPreferences: SECURE_PREFS
     });
 
-    settingsWindow.loadFile(path.join(__dirname, "../html/settings.html"));
+    settingsWindow.loadURL(AppProtocol.paginaDoApp("settings.html"));
 
     settingsWindow.once("ready-to-show", () => {
         if (settingsWindow && !settingsWindow.isDestroyed()) {
@@ -575,7 +584,7 @@ function openNoteWindow(noteId) {
     });
 
     noteWindows.set(noteId, win);
-    win.loadFile(path.join(__dirname, "../html/note.html"), { query: { id: noteId } });
+    win.loadURL(AppProtocol.paginaDoApp("note.html", { id: noteId }));
     win.once("ready-to-show", () => win.show());
 
     win.on("resized", () => {
@@ -666,7 +675,7 @@ function createQuickCaptureWindow() {
     });
 
     quickCaptureWindow.setAlwaysOnTop(true, "screen-saver");
-    quickCaptureWindow.loadFile(path.join(__dirname, "../html/quickcapture.html"));
+    quickCaptureWindow.loadURL(AppProtocol.paginaDoApp("quickcapture.html"));
     quickCaptureWindow.on("blur", hideQuickCapture);
     quickCaptureWindow.on("closed", () => (quickCaptureWindow = null));
     log("[WINDOW] captura rápida criada");
@@ -711,7 +720,7 @@ function createQuickEventWindow() {
     });
 
     quickEventWindow.setAlwaysOnTop(true, "screen-saver");
-    quickEventWindow.loadFile(path.join(__dirname, "../html/quickevent.html"));
+    quickEventWindow.loadURL(AppProtocol.paginaDoApp("quickevent.html"));
     quickEventWindow.on("blur", hideQuickEvent);
     quickEventWindow.on("closed", () => (quickEventWindow = null));
     log("[WINDOW] evento rápido criado");
@@ -795,7 +804,7 @@ function createAlarmWindow() {
     });
 
     alarmWindow.setAlwaysOnTop(true, "screen-saver");
-    alarmWindow.loadFile(path.join(__dirname, "../html/alarm.html"));
+    alarmWindow.loadURL(AppProtocol.paginaDoApp("alarm.html"));
     alarmWindow.on("closed", () => (alarmWindow = null));
     log("[WINDOW] alarme criado");
 }
@@ -1025,12 +1034,20 @@ function createTray() {
 app.on("web-contents-created", (event, contents) => {
     contents.setWindowOpenHandler(() => ({ action: "deny" }));
 
-    contents.on("will-navigate", (e, url) => {
-        if (!url.startsWith("file://")) {
-            e.preventDefault();
-            warn("[SECURITY] Navegação externa bloqueada:", url);
-        }
+    // As telas nunca navegam: cada janela recebe a sua página por loadURL (que
+    // não passa por estes eventos) e fica nela. Qualquer navegação é, então,
+    // algo indevido — link clicado, arquivo arrastado para a janela, página
+    // tentando trocar de endereço — e é recusada sem exceção. Isso vale também
+    // para app://, para nenhuma tela virar outra com o preload da primeira.
+    const bloquear = (mensagem) => (e, url) => {
+        e.preventDefault();
+        warn(`[SECURITY] ${mensagem}:`, url);
+    };
+    contents.on("will-navigate", bloquear("Navegação bloqueada"));
+    contents.on("will-frame-navigate", (e) => {
+        if (!e.isMainFrame) { e.preventDefault(); warn("[SECURITY] Navegação de frame bloqueada:", e.url); }
     });
+    contents.on("will-redirect", bloquear("Redirecionamento bloqueado"));
 
     contents.on("will-attach-webview", (e) => e.preventDefault());
 
@@ -1063,6 +1080,7 @@ app.whenReady().then(() => {
         log("[APP] Aberto junto com o Windows — widget começa recolhido.");
     }
 
+    AppProtocol.instalar();
     google.iniciar();
     createTray();
     createWidgetWindow();

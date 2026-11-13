@@ -22,7 +22,7 @@
       "enableEmbeddedAsarIntegrityValidation": true,
       "onlyLoadAppFromAsar": true,
       "enableCookieEncryption": true,
-      "grantFileProtocolExtraPrivileges": true,
+      "grantFileProtocolExtraPrivileges": false,
       "loadBrowserProcessSpecificV8Snapshot": false
     },
     "directories": {
