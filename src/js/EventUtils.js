@@ -61,17 +61,13 @@
         return occ;
     }
 
+    // Não existe "marcar como feito" em evento: o único fica concluído (null)
+    // quando a data passa; o recorrente sempre tem uma próxima ocorrência.
     function getNextOccurrence(event, today = todayISO()) {
-        const completed = event.completedDates || [];
         if (!event.recurrence || event.recurrence === "none") {
-            return completed.includes(event.date) ? null : event.date;
+            return event.date < today ? null : event.date;
         }
-        let occ = fastForwardToToday(event.date, event.recurrence, today);
-        let guard = 0;
-        while (occ && completed.includes(occ) && guard++ < 2000) {
-            occ = addInterval(occ, event.recurrence);
-        }
-        return occ;
+        return fastForwardToToday(event.date, event.recurrence, today);
     }
 
     function occurrenceDateTime(occDate, startTime) {
@@ -117,9 +113,43 @@
         return age > 0 && age < 150 ? age : null;
     }
 
+    function occurrencesBetween(event, fromISO, toISO) {
+        if (!event.recurrence || event.recurrence === "none") {
+            return event.date >= fromISO && event.date <= toISO ? [event.date] : [];
+        }
+        const out = [];
+        let occ = fastForwardToToday(event.date, event.recurrence, fromISO);
+        let guard = 0;
+        while (occ && occ <= toISO && guard++ < 1000) {
+            out.push(occ);
+            occ = addInterval(occ, event.recurrence);
+        }
+        return out;
+    }
+
+    // Remove marcações de "feito" gravadas pela antiga caixa de concluir (e pela
+    // conclusão automática, hoje derivada da data). Devolve os eventos alterados.
+    function clearLegacyCompletions(events, now = Date.now()) {
+        const changed = [];
+        for (const evt of events || []) {
+            const tinha = (evt.completedDates || []).length > 0 || "autoCompletedFor" in evt;
+            if (!tinha) continue;
+            evt.completedDates = [];
+            delete evt.autoCompletedFor;
+            // updatedAt precisa subir pro widget aceitar a versão do main; se o
+            // evento já estava em dia com o Google, continua (nada muda lá).
+            const emDiaComGoogle = evt.googleEventId && (evt.googleSyncedAt || 0) >= (evt.updatedAt || 0);
+            evt.updatedAt = now;
+            if (emDiaComGoogle) evt.googleSyncedAt = now;
+            changed.push(evt);
+        }
+        return changed;
+    }
+
     return {
         pad, toISODate, todayISO, addInterval, addDays, daysBetween,
-        getNextOccurrence, occurrenceDateTime,
-        compareByOccurrence, nextBirthdayOccurrence, ageAtOccurrence
+        getNextOccurrence, occurrenceDateTime, occurrencesBetween,
+        compareByOccurrence, nextBirthdayOccurrence, ageAtOccurrence,
+        clearLegacyCompletions
     };
 });

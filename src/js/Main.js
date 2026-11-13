@@ -134,7 +134,7 @@ function setMode(collapsed) {
 
     if (wasCollapsed && !collapsed) {
         checkNoTimeEventsToday();
-        google.sincronizarSeConectado();
+        google.sincronizarAutomatico("widget aberto");
     }
 
     if (!widgetWindow || widgetWindow.isDestroyed()) return;
@@ -154,6 +154,26 @@ ipcMain.on("log-entry", (event, entrada) => registrarDeRenderer(entrada));
 
 ipcMain.handle("get-data", () => data);
 ipcMain.handle("get-app-version", () => app.getVersion());
+
+/* ══════════════════════════  INICIAR COM O WINDOWS  ═══════════════════════ */
+
+const LOGIN_ITEM = { name: "Note-Chan", args: ["--inicio-com-windows"] };
+const abertoPeloLogin = process.argv.includes("--inicio-com-windows");
+
+function estadoInicioAutomatico() {
+    if (!app.isPackaged) return { disponivel: false, ativo: false };
+    const atual = app.getLoginItemSettings(LOGIN_ITEM);
+    return { disponivel: true, ativo: atual.executableWillLaunchAtLogin ?? atual.openAtLogin };
+}
+
+ipcMain.handle("get-auto-start", () => estadoInicioAutomatico());
+
+ipcMain.handle("set-auto-start", (event, ativar) => {
+    if (!app.isPackaged) return estadoInicioAutomatico();
+    app.setLoginItemSettings({ ...LOGIN_ITEM, openAtLogin: ativar === true });
+    log("[APP] Iniciar com o Windows:", ativar === true ? "ligado" : "desligado");
+    return estadoInicioAutomatico();
+});
 
 function queueGoogleDeletes(removed) {
     const ids = removed.filter(item => item.googleEventId).map(item => item.googleEventId);
@@ -181,10 +201,11 @@ ipcMain.on("save-data", (event, payload) => {
     data.lists = Array.isArray(payload.lists) ? payload.lists : data.lists;
     data.habits = Array.isArray(payload.habits) ? payload.habits : data.habits;
     if (Array.isArray(payload.birthdays)) {
-        data.birthdays = mergeMainOwnedList(data.birthdays, payload.birthdays, ["googleEventId", "googleSyncedAt"]);
+        data.birthdays = mergeMainOwnedList(data.birthdays, payload.birthdays, ["googleEventId", "googleSyncedAt", "foreign"]);
+        widgetWindow?.webContents.send("birthdays-updated", data.birthdays);
     }
     if (Array.isArray(payload.events)) {
-        data.events = mergeMainOwnedList(data.events, payload.events, ["lastNotified", "lastNoTimeNotified", "googleEventId", "googleSyncedAt", "foreign"]);
+        data.events = mergeMainOwnedList(data.events, payload.events, ["lastNotified", "lastNoTimeNotified", "googleEventId", "googleSyncedAt", "foreign", "googleType"]);
     }
     if (Array.isArray(payload.tags)) {
         const removedIds = data.tags
@@ -204,6 +225,9 @@ ipcMain.on("save-data", (event, payload) => {
     }
     if (payload.widget && payload.widget.activeTab) {
         data.widget.activeTab = payload.widget.activeTab;
+    }
+    if (payload.widget && (payload.widget.eventView === "cards" || payload.widget.eventView === "agenda")) {
+        data.widget.eventView = payload.widget.eventView;
     }
     if (payload.tamagotchi) {
         data.tamagotchi = {
@@ -236,7 +260,12 @@ ipcMain.on("save-settings", (event, settings) => {
     if (shortcutsChanged) registerShortcuts();
 });
 
-ipcMain.on("open-settings", () => openSettingsWindow());
+ipcMain.on("open-settings", (event, tab) => {
+    const abrirAba = typeof tab === "string"
+        ? () => settingsWindow?.webContents.send("show-settings-tab", tab)
+        : undefined;
+    openSettingsWindow(abrirAba);
+});
 ipcMain.on("close-settings", () => settingsWindow?.close());
 ipcMain.on("settings-minimize", () => settingsWindow?.minimize());
 
@@ -825,8 +854,19 @@ ipcMain.on("alarm-snooze", () => {
 
 /* ═══════════════════════  NOTIFICAÇÕES DE EVENTOS  ═══════════════════════ */
 
+// Evento não tem mais "feito" manual (o único conclui sozinho quando a data
+// passa); apaga as marcações que sobraram da caixa de concluir antiga.
+function clearLegacyCompletions() {
+    const changed = EventUtils.clearLegacyCompletions(data.events);
+    if (changed.length === 0) return;
+    log("[EVENTS] Marcações antigas de concluído removidas:", changed.map(e => e.title).join(", "));
+    debouncedSaveData();
+    widgetWindow?.webContents.send("events-updated", data.events);
+}
+
 function checkEventNotifications() {
     if (!Array.isArray(data.events) || data.events.length === 0) return;
+    clearLegacyCompletions();
 
     const now = Date.now();
     let changed = false;
@@ -1016,6 +1056,11 @@ app.on("second-instance", () => {
 app.whenReady().then(() => {
     if (process.platform === "win32") {
         app.setAppUserModelId("com.renato.notechan");
+    }
+
+    if (abertoPeloLogin) {
+        data.widget.collapsed = true;
+        log("[APP] Aberto junto com o Windows — widget começa recolhido.");
     }
 
     google.iniciar();

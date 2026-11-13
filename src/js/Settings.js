@@ -31,6 +31,7 @@ const tagCards = TagCards.criar({ podeSalvar, antesDeCriar });
 
 GoogleSettings.criar();
 UpdateSettings.criar();
+StartupSettings.criar();
 
 function applyToUI(s) {
     settings = s;
@@ -88,6 +89,10 @@ function novoAniversariante() {
     setSettingsTab("aniversarios");
     aniversarios.criarNovo();
 }
+
+window.api.on("show-settings-tab", (tab) => {
+    if (document.getElementById(`stab-${tab}`)) setSettingsTab(tab);
+});
 
 window.api.on("quick-create", (type) => {
     if (type !== "aniversario") return;

@@ -129,6 +129,7 @@ function startOAuthFlow() {
         const state = base64url(crypto.randomBytes(16));
 
         let settled = false;
+        let redirectUri = null;
         const timeoutHandle = setTimeout(() => {
             if (settled) return;
             settled = true;
@@ -155,9 +156,12 @@ function startOAuthFlow() {
                 if (returnedState !== state || !code) { settled = true; clearTimeout(timeoutHandle); reject(new Error("Resposta OAuth inválida (state não confere).")); return; }
 
                 try {
-                    const port = server.address().port;
-                    const redirectUri = `http://127.0.0.1:${port}`;
                     const tokens = await exchangeCode(code, codeVerifier, redirectUri);
+                    const granted = (tokens.scope || "").split(" ");
+                    if (!granted.includes("https://www.googleapis.com/auth/calendar")) {
+                        revokeQuietly(tokens.refresh_token || tokens.access_token);
+                        throw new Error("A permissão da agenda não foi concedida. Conecte de novo e marque a opção do Google Agenda na tela do Google.");
+                    }
                     refreshToken = tokens.refresh_token || refreshToken;
                     accessToken = tokens.access_token;
                     accessTokenExpiry = Date.now() + tokens.expires_in * 1000;
@@ -183,8 +187,7 @@ function startOAuthFlow() {
         });
 
         server.listen(0, "127.0.0.1", () => {
-            const port = server.address().port;
-            const redirectUri = `http://127.0.0.1:${port}`;
+            redirectUri = `http://127.0.0.1:${server.address().port}`;
             const params = new URLSearchParams({
                 client_id: config.CLIENT_ID,
                 redirect_uri: redirectUri,
@@ -233,16 +236,19 @@ async function getValidAccessToken() {
     return refreshAccessToken();
 }
 
+async function revokeQuietly(token) {
+    if (!token) return;
+    try {
+        await fetch(`${REVOKE_URL}?token=${encodeURIComponent(token)}`, { method: "POST" });
+    } catch (e) {
+        warn("[GOOGLE] Falha ao revogar token no Google (ignorado):", e.message);
+    }
+}
+
 async function disconnect() {
     const tokenToRevoke = refreshToken || accessToken;
     clearToken();
-    if (tokenToRevoke) {
-        try {
-            await fetch(`${REVOKE_URL}?token=${encodeURIComponent(tokenToRevoke)}`, { method: "POST" });
-        } catch (e) {
-            warn("[GOOGLE] Falha ao revogar token no Google (ignorado):", e.message);
-        }
-    }
+    await revokeQuietly(tokenToRevoke);
     log("[GOOGLE] Desconectado.");
 }
 

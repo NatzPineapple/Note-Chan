@@ -3,7 +3,8 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 const RECEIVE = new Set([
     "quick-create", "set-mode", "apply-settings", "notes-updated", "reset", "tags-updated",
-    "alarm-ring", "open-tama", "events-updated", "birthdays-updated", "note-updated"
+    "alarm-ring", "open-tama", "events-updated", "birthdays-updated", "note-updated",
+    "show-settings-tab"
 ]);
 
 const SEND = new Set([
@@ -18,6 +19,7 @@ const SEND = new Set([
 
 const INVOKE = new Set([
     "get-data", "get-app-version", "note-data", "check-update",
+    "get-auto-start", "set-auto-start",
     "google-auth-status", "google-auth-start", "google-disconnect", "google-sync-now"
 ]);
 

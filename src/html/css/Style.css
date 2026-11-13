@@ -171,11 +171,14 @@ svg { vertical-align: -2px; flex-shrink: 0; }
 
 /* ──────────────────────────────  Nova entrada  ─────────────────────────── */
 #new-btn-container {
+  display: flex;
+  gap: 4px;
   padding: 0 3px;
   margin-bottom: 6px;
 }
 
 #new-btn {
+  flex: 1;
   width: 100%;
   padding: 5px 0;
   background: rgb(var(--surface-rgb, 255 255 255) / 0.08);
@@ -188,6 +191,143 @@ svg { vertical-align: -2px; flex-shrink: 0; }
 }
 #new-btn:hover  { background: rgb(var(--surface-rgb, 255 255 255) / 0.16); }
 #new-btn:active { background: rgb(var(--surface-rgb, 255 255 255) / 0.24); }
+
+#view-toggle {
+  flex: 0 0 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: rgb(var(--surface-rgb, 255 255 255) / 0.08);
+  color: rgb(var(--accent-rgb, 255 215 0));
+  border: none;
+  border-radius: var(--nc-raio-ctrl, 7px);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+#view-toggle[hidden] { display: none; }
+#view-toggle:hover  { background: rgb(var(--surface-rgb, 255 255 255) / 0.16); }
+#view-toggle:active { background: rgb(var(--surface-rgb, 255 255 255) / 0.24); }
+
+/* ───────────────────────────────  Agenda  ───────────────────────────────── */
+.agenda-month {
+  margin: 8px 4px 4px;
+  font-size: 0.8em;
+  font-weight: bold;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgb(var(--panel-text-rgb, 255 255 255) / 0.55);
+}
+.agenda-month:first-child { margin-top: 2px; }
+
+.agenda-day {
+  display: grid;
+  grid-template-columns: 38px 1fr;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.agenda-date {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 2px;
+  color: rgb(var(--panel-text-rgb, 255 255 255) / 0.75);
+}
+.agenda-weekday { font-size: 0.72em; }
+.agenda-daynum {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  font-size: 1.1em;
+  font-weight: bold;
+}
+.agenda-day.today .agenda-weekday { color: rgb(var(--accent-rgb, 255 215 0)); }
+.agenda-day.today .agenda-daynum {
+  background: rgb(var(--accent-rgb, 255 215 0));
+  color: rgb(var(--bg-rgb, 30 30 30));
+}
+
+.agenda-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Sem tag: neutro, pra não parecer que tem cor. Com tag (.tagged): a cor da
+   primeira tag tinge o item sobre uma base neutra — branco nos temas claros,
+   o fundo do tema nos escuros — pra o tom não se misturar com o do painel. */
+.agenda-item {
+  --ev-cor: rgb(var(--surface-rgb, 255 255 255) / 0.35);
+  --ev-base: light-dark(#fff, rgb(var(--bg-rgb, 30 30 30)));
+  display: block;
+  width: 100%;
+  padding: 5px 8px;
+  text-align: left;
+  font: inherit;
+  color: rgb(var(--panel-text-rgb, 255 255 255));
+  background: rgb(var(--surface-rgb, 255 255 255) / 0.08);
+  border: none;
+  border-left: 3px solid var(--ev-cor);
+  border-radius: var(--nc-raio-ctrl, 7px);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.agenda-item:hover { background: rgb(var(--surface-rgb, 255 255 255) / 0.14); }
+
+.agenda-item.tagged {
+  background: color-mix(in srgb, var(--ev-cor) 28%, var(--ev-base));
+  border-left-width: 5px;
+}
+.agenda-item.tagged:hover { background: color-mix(in srgb, var(--ev-cor) 40%, var(--ev-base)); }
+.agenda-item.tagged .agenda-title {
+  color: color-mix(in srgb, var(--ev-cor) 65%, rgb(var(--panel-text-rgb, 255 255 255)));
+}
+.agenda-item.kb-selected { outline: 1px solid rgb(var(--accent-rgb, 255 215 0)); }
+
+.agenda-title {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+.agenda-time {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.82em;
+  opacity: 0.8;
+}
+
+.agenda-item.birthday .agenda-title svg { vertical-align: -1px; }
+
+.agenda-empty {
+  padding: 10px 4px;
+  font-size: 0.9em;
+  text-align: center;
+  color: rgb(var(--panel-text-rgb, 255 255 255) / 0.55);
+}
+
+.agenda-more {
+  display: block;
+  width: 100%;
+  margin: 2px 0 6px;
+  padding: 5px 0;
+  font: inherit;
+  font-size: 0.88em;
+  color: rgb(var(--accent-rgb, 255 215 0));
+  background: transparent;
+  border: 1px dashed rgb(var(--surface-rgb, 255 255 255) / 0.18);
+  border-radius: var(--nc-raio-ctrl, 7px);
+  cursor: pointer;
+}
+.agenda-more:hover { background: rgb(var(--surface-rgb, 255 255 255) / 0.08); }
+.agenda-more.kb-selected { outline: 1px solid rgb(var(--accent-rgb, 255 215 0)); }
 
 /* ───────────────────────────────  Busca de cards  ───────────────────────── */
 #search-bar {
@@ -571,7 +711,6 @@ svg { vertical-align: -2px; flex-shrink: 0; }
 }
 .event-badge.today   { background: rgb(var(--accent-rgb, 255 215 0) / 0.22); color: rgb(var(--accent-rgb, 255 215 0)); }
 .event-badge.soon    { background: rgba(120, 170, 255, 0.22); color: #4f8fe0; }
-.event-badge.overdue { background: rgb(var(--danger-rgb, 255 128 128) / 0.22); color: rgb(var(--danger-rgb, 255 128 128)); }
 .event-badge.done    { background: rgba(90, 190, 120, 0.22); color: #3f9a5c; }
 
 .event-fields {
@@ -638,7 +777,8 @@ svg { vertical-align: -2px; flex-shrink: 0; }
   letter-spacing: 0.5px;
 }
 
-.event-done-btn {
+/* Botão Salvar no rodapé do card de evento, com feedback de estado */
+.event-save-btn {
   width: 100%;
   display: inline-flex;
   align-items: center;
@@ -646,21 +786,29 @@ svg { vertical-align: -2px; flex-shrink: 0; }
   gap: 6px;
   margin-top: 4px;
   padding: 6px 0;
-  background: rgba(90, 190, 120, 0.16);
-  color: #3f9a5c;
-  border: 1px solid rgba(90, 190, 120, 0.35);
+  background: rgb(var(--accent-rgb, 255 215 0) / 0.16);
+  color: rgb(var(--accent-rgb, 255 215 0));
+  border: 1px solid rgb(var(--accent-rgb, 255 215 0) / 0.35);
   border-radius: var(--nc-raio-ctrl, 7px);
   cursor: pointer;
   font-size: 0.9em;
   font-weight: bold;
-  transition: background 0.2s;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
 }
-.event-done-btn:hover { background: rgba(90, 190, 120, 0.26); }
-.event-done-btn.is-done {
-  background: rgb(var(--surface-rgb, 255 255 255) / 0.08);
-  color: rgb(var(--panel-text-rgb, 255 255 255) / 0.65);
-  border-color: rgb(var(--surface-rgb, 255 255 255) / 0.18);
+.event-save-btn:hover:not(:disabled) { background: rgb(var(--accent-rgb, 255 215 0) / 0.26); }
+.event-save-btn.saving { cursor: progress; opacity: 0.8; }
+.event-save-btn.saving svg { animation: nc-spin 0.9s linear infinite; }
+.event-save-btn.ok {
+  background: rgba(90, 190, 120, 0.18);
+  color: #3f9a5c;
+  border-color: rgba(90, 190, 120, 0.45);
 }
+.event-save-btn.warn {
+  background: rgb(var(--danger-rgb, 255 128 128) / 0.16);
+  color: rgb(var(--danger-rgb, 255 128 128));
+  border-color: rgb(var(--danger-rgb, 255 128 128) / 0.4);
+}
+@keyframes nc-spin { to { transform: rotate(360deg); } }
 
 /* ────────────────────────────  Aniversariantes  ─────────────────────────── */
 .birthday-badge {
@@ -993,7 +1141,8 @@ svg { vertical-align: -2px; flex-shrink: 0; }
 
 /* ═════════════════════════════  Mapa de hábitos  ══════════════════════════ */
 
-#habits-fab {
+#habits-fab,
+#habits-return-fab {
   position: absolute;
   right: 12px;
   bottom: 12px;
@@ -1011,8 +1160,14 @@ svg { vertical-align: -2px; flex-shrink: 0; }
   z-index: 6;
   transition: transform 0.15s;
 }
-#habits-fab:hover { transform: scale(1.08); }
-#habits-fab:active { transform: scale(0.96); }
+#habits-fab:hover,
+#habits-return-fab:hover { transform: scale(1.08); }
+#habits-fab:active,
+#habits-return-fab:active { transform: scale(0.96); }
+
+/* Mesma bolinha, no mesmo lugar, mas só dentro do mapa de hábitos: volta pro board. */
+#habits-return-fab { display: none; }
+#container.habits-open:not(.collapsed) #habits-return-fab { display: flex; }
 
 #habits-fab-alert {
   position: absolute;

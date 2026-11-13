@@ -8,6 +8,9 @@ const CALENDAR_ID = "primary";
 const API_BASE = "https://www.googleapis.com/calendar/v3";
 const SYNC_PAST_DAYS = 30;
 const SYNC_FUTURE_DAYS = 365;
+// Sobe quando a importação passa a ler algo novo; força uma leitura completa.
+// 2: aniversários do Google viram aniversariantes · 3: guarda o eventType (googleType)
+const IMPORT_VERSION = 3;
 
 function localTimeZone() {
     return Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -69,8 +72,17 @@ function eventToGooglePayload(evt) {
     return body;
 }
 
+// PATCH mescla start/end campo a campo: sem zerar o formato antigo, um evento que
+// passa de "dia inteiro" para "com horário" (ou o contrário) fica com date e dateTime
+// juntos e o Google responde 400 "Invalid start time".
+function withExclusiveTime(t) {
+    return t.dateTime ? { ...t, date: null } : { ...t, dateTime: null, timeZone: null };
+}
+
 function eventPatchPayload(evt) {
     const full = eventToGooglePayload(evt);
+    full.start = withExclusiveTime(full.start);
+    full.end = withExclusiveTime(full.end);
     if (evt.foreign === false) return full;
     return { summary: full.summary, start: full.start, end: full.end };
 }
@@ -119,8 +131,70 @@ function googleToEventFields(gEvt) {
         startTime,
         endTime,
         recurrence,
-        link: /^https?:\/\//i.test(desc) ? desc : null
+        link: /^https?:\/\//i.test(desc) ? desc : null,
+        googleType: gEvt.eventType || "default"
     };
+}
+
+/* ════════════════════  GOOGLE  ->  NOTE-CHAN (aniversários)  ═════════════ */
+
+const BIRTHDAY_TITLE = /^\s*(anivers[aá]rio|niver)\s+(d[eoa]s?\s+)?(.+?)\s*$/i;
+
+// Aniversário vindo do Google: o tipo nativo (contatos / perfil, eventType
+// "birthday") ou um evento anual de dia inteiro chamado "Aniversário de X".
+function isGoogleBirthday(gEvt) {
+    if (gEvt.eventType === "birthday") return true;
+    return !!gEvt.start?.date && extractFreq(gEvt.recurrence) === "YEARLY" && BIRTHDAY_TITLE.test(gEvt.summary || "");
+}
+
+function googleToBirthdayFields(gEvt) {
+    const date = gEvt.start?.date;
+    if (!date) return null;
+    const summary = (gEvt.summary || "").trim();
+    const m = BIRTHDAY_TITLE.exec(summary);
+    let name = m ? m[3] : summary;
+    if (gEvt.birthdayProperties?.type === "self") name = "Meu aniversário";
+    return { name: name || "(sem nome)", date };
+}
+
+const monthDay = date => date.slice(5);
+const sameName = (a, b) => a.trim().toLocaleLowerCase("pt-BR") === b.trim().toLocaleLowerCase("pt-BR");
+
+function applyGoogleBirthday(data, gEvt) {
+    const existing = data.birthdays.find(b => b.googleEventId === gEvt.id);
+    if (gEvt.status === "cancelled") {
+        if (existing) data.birthdays = data.birthdays.filter(b => b.id !== existing.id);
+        return;
+    }
+    const fields = googleToBirthdayFields(gEvt);
+    if (!fields) return;
+
+    // Já importado antes como evento comum: vira aniversariante.
+    data.events = data.events.filter(e => e.googleEventId !== gEvt.id);
+
+    const stamp = Date.now();
+    if (existing) {
+        Object.assign(existing, fields, { updatedAt: stamp, googleSyncedAt: stamp, foreign: true });
+        return;
+    }
+    // Mesmo nome e mesmo dia de um aniversariante local ainda não sincronizado:
+    // é a mesma pessoa — liga os dois em vez de duplicar (aqui e no Google).
+    const twin = data.birthdays.find(b => !b.googleEventId
+        && monthDay(b.date) === monthDay(fields.date) && sameName(b.name, fields.name));
+    if (twin) {
+        Object.assign(twin, { googleEventId: gEvt.id, googleSyncedAt: stamp, foreign: true });
+        return;
+    }
+    data.birthdays.push({
+        id: crypto.randomUUID(),
+        ...fields,
+        category: "",
+        googleEventId: gEvt.id,
+        foreign: true,
+        createdAt: stamp,
+        updatedAt: stamp,
+        googleSyncedAt: stamp
+    });
 }
 
 /* ═══════════════════════════════  SYNC  ════════════════════════════════ */
@@ -134,7 +208,12 @@ async function processPendingDeletes(data) {
         try {
             const res = await apiFetch(`/calendars/${CALENDAR_ID}/events/${encodeURIComponent(id)}`, { method: "DELETE" });
             if (res.ok || res.status === 404 || res.status === 410) done.add(id);
-            else warn("[GOOGLE] Falha ao excluir evento remoto (fica na fila)", id, res.status);
+            else if (res.status === 400 || res.status === 403) {
+                // Recusa definitiva (ex.: aniversário de contato, que só o Google
+                // Contatos apaga) — tentar de novo a cada sync não adianta.
+                done.add(id);
+                warn("[GOOGLE] Google recusou excluir o evento, removido da fila:", id, res.status, await res.text().catch(() => ""));
+            } else warn("[GOOGLE] Falha ao excluir evento remoto (fica na fila)", id, res.status);
         } catch (e) {
             warn("[GOOGLE] Erro ao excluir evento remoto (fica na fila)", id, e.message);
         }
@@ -190,13 +269,28 @@ function applyGoogleEventsToLocal(data, googleItems) {
 
         if (birthdayId) {
             const local = data.birthdays.find(b => b.id === birthdayId);
-            if (!local) continue; 
             if (gEvt.status === "cancelled") {
                 data.birthdays = data.birthdays.filter(b => b.id !== birthdayId);
-            } else {
+            } else if (local) {
                 local.googleEventId = gEvt.id;
                 local.googleSyncedAt = Date.now();
+            } else {
+                // Criado pelo Note-Chan mas sumiu daqui (outra máquina, dados
+                // restaurados...): recria o aniversariante em vez de ignorar.
+                const fields = googleToBirthdayFields(gEvt);
+                if (fields) {
+                    const stamp = Date.now();
+                    data.birthdays.push({
+                        id: birthdayId, ...fields, category: "",
+                        googleEventId: gEvt.id, createdAt: stamp, updatedAt: stamp, googleSyncedAt: stamp
+                    });
+                }
             }
+            continue;
+        }
+
+        if (!noteChanId && isGoogleBirthday(gEvt)) {
+            applyGoogleBirthday(data, gEvt);
             continue;
         }
 
@@ -220,7 +314,9 @@ function applyGoogleEventsToLocal(data, googleItems) {
         // Evento "estrangeiro" (criado direto no Google, sem nossa tag).
         const existing = data.events.find(e => e.googleEventId === gEvt.id);
         if (gEvt.status === "cancelled") {
+            // Excluído no Google: cancelados vêm só com id/status, sem dizer se era aniversário.
             if (existing) data.events = data.events.filter(e => e.id !== existing.id);
+            data.birthdays = data.birthdays.filter(b => b.googleEventId !== gEvt.id);
             continue;
         }
         const fields = googleToEventFields(gEvt);
@@ -287,7 +383,7 @@ async function patchItem(googleEventId, payload, label) {
     });
     if (res.ok) return true;
     if (res.status === 404 || res.status === 410) return null;
-    warn("[GOOGLE] Falha ao atualizar", label, res.status);
+    warn("[GOOGLE] Falha ao atualizar", label, res.status, await res.text().catch(() => ""));
     return false;
 }
 
@@ -304,6 +400,9 @@ async function pushLocalChanges(data) {
     const changed = item => item.googleEventId && (item.updatedAt || 0) > (item.googleSyncedAt || 0);
 
     for (const evt of data.events.filter(changed)) {
+        // Tipos especiais do Google (fromGmail, focusTime, outOfOffice...) não
+        // aceitam mudar título/horário pela API (400). Ficam só leitura de lá.
+        if (evt.googleType && evt.googleType !== "default") { evt.googleSyncedAt = evt.updatedAt; continue; }
         try {
             const result = await patchItem(evt.googleEventId, eventPatchPayload(evt), evt.title);
             if (result === null) { evt.googleEventId = null; evt.googleSyncedAt = 0; }
@@ -314,6 +413,10 @@ async function pushLocalChanges(data) {
     }
 
     for (const b of data.birthdays.filter(changed)) {
+        // Aniversário que veio do Google (contatos, perfil ou criado lá) é só
+        // leitura: os nativos não aceitam edição pela API, e renomear aqui não
+        // deve reescrever o evento de lá.
+        if (b.foreign) { b.googleSyncedAt = b.updatedAt; continue; }
         try {
             const result = await patchItem(b.googleEventId, birthdayToGooglePayload(b), b.name);
             if (result === null) { b.googleEventId = null; b.googleSyncedAt = 0; }
@@ -328,6 +431,11 @@ async function runSync(data) {
     if (!GoogleAuth.isConnected()) return { ok: false, error: "not-connected" };
     data.googleSync = data.googleSync || { syncToken: null, lastSyncAt: null, pendingDeletes: [] };
 
+    // Versões antigas importavam aniversários do Google como eventos comuns. Uma
+    // leitura completa (sem syncToken) reaplica todos e converte os que já vieram.
+    const precisaReimportar = (data.googleSync.importVersion || 0) < IMPORT_VERSION;
+    if (precisaReimportar) data.googleSync.syncToken = null;
+
     try {
         adoptLegacyItems(data);
         await processPendingDeletes(data);
@@ -336,6 +444,7 @@ async function runSync(data) {
         applyGoogleEventsToLocal(data, items);
         await pushNewLocalItems(data);
 
+        if (precisaReimportar) data.googleSync.importVersion = IMPORT_VERSION;
         if (nextSyncToken) data.googleSync.syncToken = nextSyncToken;
         data.googleSync.lastSyncAt = Date.now();
         return { ok: true, count: items.length };

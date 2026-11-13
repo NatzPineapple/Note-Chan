@@ -48,7 +48,8 @@
                 const status = await window.api.invoke("google-auth-start");
                 aplicarStatus({ configured: true, ...status, lastSyncAt: null });
             } catch (e) {
-                statusText.textContent = "Falha ao conectar: " + e.message;
+                const motivo = e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
+                statusText.textContent = "Falha ao conectar: " + motivo;
             } finally {
                 connectBtn.disabled = false;
                 connectBtn.textContent = "Conectar";

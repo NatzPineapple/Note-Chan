@@ -11,11 +11,13 @@ let data = {
     widget: { collapsed: true, activeTab: "notas" }
 };
 let activeTab = "notas";
+let eventView = "cards";
 const expanded = new Set();
 
 const container   = document.getElementById("container");
 const board       = document.getElementById("board");
 const newBtn      = document.getElementById("new-btn");
+const viewToggle  = document.getElementById("view-toggle");
 const tabButtons  = document.querySelectorAll(".tab-btn");
 
 const { newId, escapeHtml } = UiUtils;
@@ -26,18 +28,30 @@ const obterDados = () => data;
 let booted = false;
 
 let saveTimer = null;
+function sendSave() {
+    window.api.send("save-data", {
+        notes: data.notes,
+        lists: data.lists,
+        events: data.events,
+        habits: data.habits,
+        widget: { activeTab, eventView }
+    });
+}
+
 function scheduleSave() {
     if (!booted) return;
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-        window.api.send("save-data", {
-            notes: data.notes,
-            lists: data.lists,
-            events: data.events,
-            habits: data.habits,
-            widget: { activeTab }
-        });
-    }, 400);
+    saveTimer = setTimeout(sendSave, 400);
+}
+
+// Grava já (sem o debounce) e pede a sincronização com o Google. As mensagens
+// do renderer chegam em ordem, então o save-data é aplicado antes do sync.
+// Sem conta conectada, o main responde { ok: false, error: "not-connected" }.
+function saveAndSync() {
+    if (!booted) return Promise.resolve(null);
+    clearTimeout(saveTimer);
+    sendSave();
+    return window.api.invoke("google-sync-now").catch(() => ({ ok: false, error: "ipc" }));
 }
 
 /* ═══════════════════════════════  MÓDULOS  ═══════════════════════════════ */
@@ -79,8 +93,14 @@ cardCtx.base = CardBase.criar({ ...cardCtx, estaEditando: () => isEditingContext
 const CARDS_DA_ABA = {
     notas: NoteCard.criar(cardCtx),
     listas: ListCard.criar(cardCtx),
-    eventos: EventCard.criar(cardCtx)
+    eventos: EventCard.criar({ ...cardCtx, sincronizar: saveAndSync, abrirNosCards: abrirEventoNosCards })
 };
+
+function abrirEventoNosCards(id) {
+    expanded.add(id);
+    setEventView("cards");
+    board.querySelector(`.card[data-id="${id}"]`)?.scrollIntoView({ block: "nearest" });
+}
 
 /* ═══════════════════════════════  ABAS  ══════════════════════════════════ */
 
@@ -90,6 +110,7 @@ function setActiveTab(tab) {
     activeTab = tab;
     tabButtons.forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tab));
     newBtn.textContent = NEW_BTN_LABELS[tab] || NEW_BTN_LABELS.notas;
+    viewToggle.hidden = tab !== "eventos";
     scheduleSave();
     renderBoard();
 }
@@ -98,7 +119,25 @@ tabButtons.forEach(btn => {
     btn.addEventListener("click", () => setActiveTab(btn.dataset.tab));
 });
 
-newBtn.addEventListener("click", () => CARDS_DA_ABA[activeTab].criarNovo());
+newBtn.addEventListener("click", () => {
+    if (activeTab === "eventos" && eventView === "agenda") setEventView("cards");
+    CARDS_DA_ABA[activeTab].criarNovo();
+});
+
+function atualizarViewToggle() {
+    const agenda = eventView === "agenda";
+    viewToggle.innerHTML = Icons.svg(agenda ? "layout-list" : "calendar-days", 14);
+    viewToggle.title = agenda ? "Ver como cards" : "Ver como agenda";
+}
+
+function setEventView(view) {
+    eventView = view;
+    atualizarViewToggle();
+    scheduleSave();
+    renderBoard();
+}
+
+viewToggle.addEventListener("click", () => setEventView(eventView === "agenda" ? "cards" : "agenda"));
 
 /* ═══════════════════════  DICA DE ATALHOS NAS ABAS  ═══════════════════════ */
 
@@ -171,6 +210,15 @@ function renderBoard() {
     board.innerHTML = "";
     const items = extras.filtrarPorBusca(itensDaAba());
 
+    if (activeTab === "eventos" && eventView === "agenda") {
+        const aniversarios = (data.birthdays || []).filter(b =>
+            extras.filtrarPorBusca([{ title: `Aniversário de ${b.name}` }]).length > 0);
+        if (items.length || aniversarios.length) {
+            CARDS_DA_ABA.eventos.renderAgenda(items, aniversarios);
+            return;
+        }
+    }
+
     if (items.length === 0) {
         const msg = document.createElement("div");
         msg.className = "empty-msg";
@@ -229,7 +277,7 @@ function isEditingContext() {
 }
 
 function getNavItems() {
-    return [newBtn, ...board.querySelectorAll(".card")];
+    return [newBtn, ...board.querySelectorAll(".card, .agenda-item, .agenda-more")];
 }
 
 function clearKeyboardSelection() {
@@ -436,6 +484,11 @@ window.api.on("events-updated", (events) => {
     applyRemoteUpdate(() => { data.events = mergeFromMain(data.events, events); });
 });
 
+// Aniversariantes são editados só nas Configurações; aqui é só leitura (agenda).
+window.api.on("birthdays-updated", (birthdays) => {
+    applyRemoteUpdate(() => { data.birthdays = birthdays || []; });
+});
+
 /* ═══════════════════════════════  BOOT  ══════════════════════════════════ */
 
 const VALID_TABS = new Set(["notas", "listas", "eventos"]);
@@ -452,6 +505,8 @@ window.api.invoke("get-data").then(loaded => {
     booted = true;
     applySettings(data.settings);
     setContainerMode(data.widget?.collapsed !== false);
+    eventView = data.widget?.eventView === "agenda" ? "agenda" : "cards";
+    atualizarViewToggle();
     const savedTab = data.widget?.activeTab;
     setActiveTab(VALID_TABS.has(savedTab) ? savedTab : "notas");
     tama.iniciar();

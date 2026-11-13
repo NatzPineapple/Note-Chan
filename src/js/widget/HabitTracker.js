@@ -292,6 +292,10 @@
             e.stopPropagation();
             fechar();
         });
+        document.getElementById("habits-return-fab").addEventListener("click", (e) => {
+            e.stopPropagation();
+            fechar();
+        });
         addBtn.addEventListener("click", criarHabito);
         nomeEl.addEventListener("keydown", (e) => {
             if (e.key !== "Enter") return;
