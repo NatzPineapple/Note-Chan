@@ -1,5 +1,5 @@
 /* ──────────────────────────────  GoogleIpc.js  ─────────────────────────── */
-const { ipcMain } = require("electron");
+const Ipc = require("../IpcSeguro");
 const GoogleAuth = require("./GoogleAuth");
 const GoogleCalendarSync = require("./GoogleCalendarSync");
 const { log, warn } = require("../../Logger");
@@ -85,7 +85,7 @@ function criar({ obterDados, salvar, obterJanelas }) {
 
     /* ──────────────────  Botões da tela de configurações  ─────────── */
 
-    ipcMain.handle("google-auth-status", async () => {
+    Ipc.atender("google-auth-status", ["settings"], async () => {
         await sessaoCarregada;
         return {
             configured: GoogleAuth.isConfigured(),
@@ -95,20 +95,20 @@ function criar({ obterDados, salvar, obterJanelas }) {
         };
     });
 
-    ipcMain.handle("google-auth-start", async () => {
+    Ipc.atender("google-auth-start", ["settings"], async () => {
         await sessaoCarregada;
         const result = await GoogleAuth.startOAuthFlow(); // rejeita a promise no invoke se falhar/cancelar
         sincronizar(); // primeira sincronização logo após conectar, sem esperar o usuário abrir/fechar o widget
         return { connected: true, email: result.email };
     });
 
-    ipcMain.handle("google-disconnect", async () => {
+    Ipc.atender("google-disconnect", ["settings"], async () => {
         await sessaoCarregada;
         await GoogleAuth.disconnect();
         return { connected: false };
     });
 
-    ipcMain.handle("google-sync-now", async () => {
+    Ipc.atender("google-sync-now", ["settings", "widget"], async () => {
         await sessaoCarregada;
         return sincronizar();
     });

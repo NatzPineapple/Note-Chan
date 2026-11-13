@@ -1,5 +1,5 @@
 /* ────────────────────────────────  Main.js  ─────────────────────────────── */
-const { app, Tray, Menu, BrowserWindow, ipcMain, nativeImage, screen, shell, globalShortcut, Notification } = require("electron");
+const { app, Tray, Menu, BrowserWindow, nativeImage, screen, shell, globalShortcut, Notification } = require("electron");
 const path = require("path");
 
 // Primeira coisa: recusa abrir com flags que o app não usa (ver LaunchGuard.js).
@@ -17,6 +17,8 @@ const Features = require("./Features");
 const UpdateChecker = require("./UpdateChecker");
 const RichText = require("./RichText");
 const AppProtocol = require("./main/AppProtocol");
+const Ipc = require("./main/IpcSeguro");
+const Validacao = require("./main/Validacao");
 
 /* ═══════════════════════════  INSTÂNCIA ÚNICA  ═══════════════════════════ */
 if (!app.requestSingleInstanceLock()) {
@@ -159,10 +161,25 @@ function setMode(collapsed) {
 
 /* ══════════════════════════════  IPC  ════════════════════════════════════ */
 
-ipcMain.on("log-entry", (event, entrada) => registrarDeRenderer(entrada));
+// Cada canal declara quais janelas podem usá-lo (ver main/IpcSeguro.js).
+// Papéis: widget, settings, note, quickcapture, quickevent, alarm.
 
-ipcMain.handle("get-data", () => data);
-ipcMain.handle("get-app-version", () => app.getVersion());
+// A origem do registro vem de quem o processo principal sabe que enviou, e não
+// do que a tela declara — uma tela não consegue se passar por outra no log.
+const ORIGEM_DO_PAPEL = {
+    widget: "widget", settings: "configuracoes", note: "nota",
+    quickcapture: "captura", quickevent: "evento", alarm: "alarme"
+};
+Ipc.ouvir("log-entry", Ipc.TODAS, (event, entrada, quem) => {
+    if (!entrada || typeof entrada !== "object") return;
+    registrarDeRenderer({ ...entrada, origem: ORIGEM_DO_PAPEL[quem.papel] });
+});
+
+// Widget e configurações trabalham com os dados todos; as janelas pequenas
+// (nota, captura, evento, alarme) só precisam do tema e das preferências.
+Ipc.atender("get-data", Ipc.TODAS, (event, _payload, quem) =>
+    quem.papel === "widget" || quem.papel === "settings" ? data : { settings: data.settings });
+Ipc.atender("get-app-version", ["settings"], () => app.getVersion());
 
 /* ══════════════════════════  INICIAR COM O WINDOWS  ═══════════════════════ */
 
@@ -175,9 +192,9 @@ function estadoInicioAutomatico() {
     return { disponivel: true, ativo: atual.executableWillLaunchAtLogin ?? atual.openAtLogin };
 }
 
-ipcMain.handle("get-auto-start", () => estadoInicioAutomatico());
+Ipc.atender("get-auto-start", ["settings"], () => estadoInicioAutomatico());
 
-ipcMain.handle("set-auto-start", (event, ativar) => {
+Ipc.atender("set-auto-start", ["settings"], (event, ativar) => {
     if (!app.isPackaged) return estadoInicioAutomatico();
     app.setLoginItemSettings({ ...LOGIN_ITEM, openAtLogin: ativar === true });
     log("[APP] Iniciar com o Windows:", ativar === true ? "ligado" : "desligado");
@@ -201,7 +218,10 @@ function mergeMainOwnedList(existingList, incoming, ownedFields) {
     });
 }
 
-ipcMain.on("save-data", (event, payload) => {
+Ipc.ouvir("save-data", ["widget", "settings"], (event, bruto) => {
+    // Formato e tamanho conferidos antes de qualquer coisa ir para o disco
+    // (ver main/Validacao.js). O que não passa é descartado e fica no log.
+    const payload = Validacao.payloadDeDados(bruto);
     if (!payload) return;
     if (Array.isArray(payload.notes)) {
         data.notes = payload.notes;
@@ -232,23 +252,30 @@ ipcMain.on("save-data", (event, payload) => {
         }
         widgetWindow?.webContents.send("tags-updated", data.tags);
     }
-    if (payload.widget && payload.widget.activeTab) {
+    if (payload.widget && Validacao.ehNomeSimples(payload.widget.activeTab)) {
         data.widget.activeTab = payload.widget.activeTab;
     }
     if (payload.widget && (payload.widget.eventView === "cards" || payload.widget.eventView === "agenda")) {
         data.widget.eventView = payload.widget.eventView;
     }
     if (payload.tamagotchi) {
+        // Só campos que já existem, com o mesmo tipo: a tela não cria chaves novas.
+        // lastLowNotified é do processo principal: a tela devolve o objeto
+        // inteiro, então ele é ignorado aqui em vez de virar aviso no log.
+        const { lastLowNotified: _doMain, ...daTela } = payload.tamagotchi;
         data.tamagotchi = {
             ...data.tamagotchi,
-            ...payload.tamagotchi,
+            ...Validacao.camposConhecidos(data.tamagotchi, daTela, "tamagotchi"),
             lastLowNotified: data.tamagotchi.lastLowNotified
         };
     }
     debouncedSaveData();
 });
 
-ipcMain.on("save-settings", (event, settings) => {
+Ipc.ouvir("save-settings", ["settings"], (event, bruto) => {
+    // Só chaves conhecidas, com tipo e faixa válidos; atalhos globais precisam
+    // de Ctrl, Alt ou Win (ver main/Validacao.js).
+    const settings = Validacao.configuracoes(bruto);
     if (!settings) return;
     const shortcutsChanged =
         settings.shortcuts && Object.keys(settings.shortcuts).some(
@@ -269,17 +296,17 @@ ipcMain.on("save-settings", (event, settings) => {
     if (shortcutsChanged) registerShortcuts();
 });
 
-ipcMain.on("open-settings", (event, tab) => {
-    const abrirAba = typeof tab === "string"
+Ipc.ouvir("open-settings", ["widget"], (event, tab) => {
+    const abrirAba = Validacao.ehNomeSimples(tab)
         ? () => settingsWindow?.webContents.send("show-settings-tab", tab)
         : undefined;
     openSettingsWindow(abrirAba);
 });
-ipcMain.on("close-settings", () => settingsWindow?.close());
-ipcMain.on("settings-minimize", () => settingsWindow?.minimize());
+Ipc.ouvir("close-settings", ["settings"], () => settingsWindow?.close());
+Ipc.ouvir("settings-minimize", ["settings"], () => settingsWindow?.minimize());
 
-ipcMain.on("quick-capture-submit", (event, text) => {
-    const trimmed = (text || "").trim();
+Ipc.ouvir("quick-capture-submit", ["quickcapture"], (event, text) => {
+    const trimmed = (typeof text === "string" ? text : "").slice(0, Validacao.MAX_TEXTO).trim();
     hideQuickCapture();
     if (!trimmed) return;
 
@@ -297,15 +324,16 @@ ipcMain.on("quick-capture-submit", (event, text) => {
     widgetWindow?.webContents.send("notes-updated", data.notes);
 });
 
-ipcMain.on("quick-capture-cancel", () => hideQuickCapture());
+Ipc.ouvir("quick-capture-cancel", ["quickcapture"], () => hideQuickCapture());
 
 const RECURRENCES = new Set(["none", "daily", "weekly", "monthly", "yearly"]);
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const HH_MM = /^\d{2}:\d{2}$/;
 
-ipcMain.on("quick-event-submit", (event, payload) => {
+Ipc.ouvir("quick-event-submit", ["quickevent"], (event, payload) => {
     hideQuickEvent();
-    const title = String(payload?.title || "").trim().slice(0, 200);
+    if (!payload || typeof payload !== "object") return;
+    const title = (typeof payload.title === "string" ? payload.title : "").trim().slice(0, 200);
     if (!title) return;
 
     const evt = {
@@ -328,11 +356,12 @@ ipcMain.on("quick-event-submit", (event, payload) => {
     google.sincronizarSeConectado();
 });
 
-ipcMain.on("quick-event-cancel", () => hideQuickEvent());
+Ipc.ouvir("quick-event-cancel", ["quickevent"], () => hideQuickEvent());
 
-ipcMain.on("quit-app", () => { log("[APP] Saída solicitada pelo usuário."); app.quit(); });
+// "quit-app" foi removido: nenhuma tela usava, e sair do app fica só no menu
+// da bandeja (processo principal), fora do alcance de uma tela comprometida.
 
-ipcMain.on("close-widget", () => {
+Ipc.ouvir("close-widget", ["widget"], () => {
     if (data.widget.collapsed) {
         widgetWindow?.hide();
     } else {
@@ -341,8 +370,8 @@ ipcMain.on("close-widget", () => {
     if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.close();
 });
 
-ipcMain.on("collapse-widget", () => setMode(true));
-ipcMain.on("expand-widget", () => setMode(false));
+Ipc.ouvir("collapse-widget", ["widget"], () => setMode(true));
+Ipc.ouvir("expand-widget", ["widget"], () => setMode(false));
 
 function urlExternaSegura(url) {
     if (typeof url !== "string" || !url.trim()) return null;
@@ -372,7 +401,7 @@ function abrirNoNavegador(url, contexto) {
     return true;
 }
 
-ipcMain.on("open-link", (event, url) => abrirNoNavegador(url, "(link de evento)"));
+Ipc.ouvir("open-link", ["widget", "settings"], (event, url) => abrirNoNavegador(url, "(link de evento)"));
 
 /* ═══════════════════════  SINCRONIZAÇÃO COM O GOOGLE  ═════════════════════ */
 
@@ -413,7 +442,7 @@ async function checkForUpdatesInBackground() {
     showUpdateNotification(result);
 }
 
-ipcMain.handle("check-update", async () => {
+Ipc.atender("check-update", ["settings"], async () => {
     const result = await UpdateChecker.check();
     data.updateCheck.lastCheckAt = Date.now();
     if (result.updateAvailable) data.updateCheck.notifiedVersion = result.latest;
@@ -447,6 +476,7 @@ function createWidgetWindow() {
 
     widgetWindow.setAlwaysOnTop(true, "screen-saver");
     widgetWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    Ipc.registrarJanela(widgetWindow, "widget");
     widgetWindow.loadURL(AppProtocol.paginaDoApp("widget.html"));
 
     if (!app.isPackaged) {
@@ -507,6 +537,7 @@ function createSettingsWindow() {
         webPreferences: SECURE_PREFS
     });
 
+    Ipc.registrarJanela(settingsWindow, "settings");
     settingsWindow.loadURL(AppProtocol.paginaDoApp("settings.html"));
 
     settingsWindow.once("ready-to-show", () => {
@@ -584,6 +615,7 @@ function openNoteWindow(noteId) {
     });
 
     noteWindows.set(noteId, win);
+    Ipc.registrarJanela(win, "note", { noteId });
     win.loadURL(AppProtocol.paginaDoApp("note.html", { id: noteId }));
     win.once("ready-to-show", () => win.show());
 
@@ -627,35 +659,39 @@ function createNoteInWindow() {
     openNoteWindow(note.id);
 }
 
-ipcMain.on("open-note-window", (event, noteId) => {
+Ipc.ouvir("open-note-window", ["widget"], (event, noteId) => {
     if (typeof noteId === "string" && noteId) openNoteWindow(noteId);
 });
 
-ipcMain.handle("note-data", (event, noteId) => data.notes.find(n => n.id === noteId) || null);
+// Cada janela de nota só enxerga e altera a SUA nota: o id vem de quando o
+// processo principal abriu a janela (quem.contexto), não do que a tela pede.
+function notaDaJanela(quem, idPedido, canal) {
+    if (idPedido !== quem.contexto.noteId) {
+        warn("[SECURITY] IPC recusado:", canal, "— janela da nota", quem.contexto.noteId, "pediu outra nota:", String(idPedido).slice(0, 60));
+        return null;
+    }
+    return data.notes.find(n => n.id === quem.contexto.noteId) || null;
+}
 
-ipcMain.on("note-save", (event, payload) => {
-    if (!payload || typeof payload.id !== "string") return;
-    const note = data.notes.find(n => n.id === payload.id);
+Ipc.atender("note-data", ["note"], (event, noteId, quem) => notaDaJanela(quem, noteId, "note-data"));
+
+Ipc.ouvir("note-save", ["note"], (event, payload, quem) => {
+    if (!payload || typeof payload !== "object") return;
+    const note = notaDaJanela(quem, payload.id, "note-save");
     if (!note) return;
-    note.title = (payload.title || "").trim() || "Sem título";
-    if (typeof payload.content === "string") note.content = payload.content;
+    const titulo = typeof payload.title === "string" ? payload.title.trim().slice(0, 200) : "";
+    note.title = titulo || "Sem título";
+    if (typeof payload.content === "string" && payload.content.length <= Validacao.MAX_TEXTO) {
+        note.content = payload.content;
+    }
     note.updatedAt = Date.now();
     debouncedSaveData();
     widgetWindow?.webContents.send("notes-updated", data.notes);
 });
 
-function janelaDeNota(event) {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win) return null;
-    for (const aberta of noteWindows.values()) {
-        if (aberta === win) return win;
-    }
-    warn("[NOTA] Comando de janela recusado: quem enviou não é uma janela de nota.");
-    return null;
-}
-
-ipcMain.on("note-close", (event) => janelaDeNota(event)?.close());
-ipcMain.on("note-minimize", (event) => janelaDeNota(event)?.minimize());
+// O papel "note" já garante que quem envia é uma janela de nota.
+Ipc.ouvir("note-close", ["note"], (event) => BrowserWindow.fromWebContents(event.sender)?.close());
+Ipc.ouvir("note-minimize", ["note"], (event) => BrowserWindow.fromWebContents(event.sender)?.minimize());
 
 /* ═════════════════════════════  CAPTURA RÁPIDA  ══════════════════════════ */
 
@@ -675,6 +711,7 @@ function createQuickCaptureWindow() {
     });
 
     quickCaptureWindow.setAlwaysOnTop(true, "screen-saver");
+    Ipc.registrarJanela(quickCaptureWindow, "quickcapture");
     quickCaptureWindow.loadURL(AppProtocol.paginaDoApp("quickcapture.html"));
     quickCaptureWindow.on("blur", hideQuickCapture);
     quickCaptureWindow.on("closed", () => (quickCaptureWindow = null));
@@ -720,6 +757,7 @@ function createQuickEventWindow() {
     });
 
     quickEventWindow.setAlwaysOnTop(true, "screen-saver");
+    Ipc.registrarJanela(quickEventWindow, "quickevent");
     quickEventWindow.loadURL(AppProtocol.paginaDoApp("quickevent.html"));
     quickEventWindow.on("blur", hideQuickEvent);
     quickEventWindow.on("closed", () => (quickEventWindow = null));
@@ -804,6 +842,7 @@ function createAlarmWindow() {
     });
 
     alarmWindow.setAlwaysOnTop(true, "screen-saver");
+    Ipc.registrarJanela(alarmWindow, "alarm");
     alarmWindow.loadURL(AppProtocol.paginaDoApp("alarm.html"));
     alarmWindow.on("closed", () => (alarmWindow = null));
     log("[WINDOW] alarme criado");
@@ -844,14 +883,14 @@ function fireAlarm(evt) {
     if (!alarmShowing) showNextAlarm();
 }
 
-ipcMain.on("alarm-stop", () => {
+Ipc.ouvir("alarm-stop", ["alarm"], () => {
     const evt = alarmQueue.shift();
     if (evt) log("[ALARM] Parado:", evt.title);
     alarmWindow?.hide();
     showNextAlarm();
 });
 
-ipcMain.on("alarm-snooze", () => {
+Ipc.ouvir("alarm-snooze", ["alarm"], () => {
     const evt = alarmQueue.shift();
     alarmWindow?.hide();
     if (evt) {

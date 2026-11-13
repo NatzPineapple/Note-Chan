@@ -105,6 +105,16 @@
                 return;
             }
 
+            // Atalho global vale no Windows inteiro: só com Shift, ele roubaria
+            // uma tecla de digitação comum (Shift+A deixaria de escrever "A").
+            // O processo principal recusa do mesmo jeito; aqui só explicamos.
+            const ehGlobal = grupoDaAcao[recordingAction] === "shortcuts";
+            const temForte = parts.some(p => p === "Control" || p === "Alt" || p === "Super");
+            if (ehGlobal && !temForte) {
+                mostrarDica("Atalhos globais precisam de Ctrl, Alt ou Win — só Shift tomaria uma tecla de digitação.", true);
+                return;
+            }
+
             const accelerator = parts.join("+");
             const action = recordingAction;
             recorders[action].textContent = accelerator;

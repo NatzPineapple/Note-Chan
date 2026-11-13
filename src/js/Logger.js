@@ -140,7 +140,7 @@
         }
     }
 
-    const ORIGENS = new Set(["widget", "configuracoes", "nota", "captura", "alarme", "renderer"]);
+    const ORIGENS = new Set(["widget", "configuracoes", "nota", "captura", "evento", "alarme", "renderer"]);
     const MAX_MENSAGEM = 4000;
 
     function registrarDeRenderer(entrada) {
