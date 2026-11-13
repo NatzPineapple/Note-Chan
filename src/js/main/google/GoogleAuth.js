@@ -43,32 +43,49 @@ function getEmail() {
     return userEmail;
 }
 
-function loadStoredToken() {
+// safeStorage: API assíncrona (a síncrona ficou obsoleta no Electron 45 e sai
+// no 46). Lê o mesmo formato gravado pela síncrona, então sessões já salvas
+// continuam valendo.
+async function loadStoredToken() {
     try {
         if (!fs.existsSync(TOKEN_PATH)) return;
-        const raw = fs.readFileSync(TOKEN_PATH);
-        const decrypted = safeStorage.isEncryptionAvailable()
-            ? safeStorage.decryptString(raw)
-            : raw.toString("utf8");
+        const raw = await fs.promises.readFile(TOKEN_PATH);
+        const cifrado = await safeStorage.isAsyncEncryptionAvailable();
+
+        let decrypted;
+        let regravar = false;
+        if (cifrado) {
+            const r = await safeStorage.decryptStringAsync(raw);
+            decrypted = r.result;
+            regravar = r.shouldReEncrypt; // chave do sistema trocou: regrava com a nova
+        } else {
+            decrypted = raw.toString("utf8");
+        }
+
         const parsed = JSON.parse(decrypted);
         refreshToken = parsed.refreshToken || null;
         userEmail = parsed.email || null;
         if (refreshToken) log("[GOOGLE] Sessão restaurada:", userEmail || "(sem e-mail salvo)");
+        if (regravar && refreshToken) {
+            log("[GOOGLE] Chave de criptografia do sistema mudou — regravando a sessão.");
+            await persistToken();
+        }
     } catch (e) {
         warn("[GOOGLE] Falha ao carregar sessão salva:", e.message);
     }
 }
 
-function persistToken() {
+async function persistToken() {
     try {
-        if (!safeStorage.isEncryptionAvailable()) {
+        const cifrado = await safeStorage.isAsyncEncryptionAvailable();
+        if (!cifrado) {
             warn("[GOOGLE] Criptografia do SO indisponível -- token salvo sem criptografia adicional.");
         }
         const payload = JSON.stringify({ refreshToken, email: userEmail });
-        const out = safeStorage.isEncryptionAvailable()
-            ? safeStorage.encryptString(payload)
+        const out = cifrado
+            ? await safeStorage.encryptStringAsync(payload)
             : Buffer.from(payload, "utf8");
-        fs.writeFileSync(TOKEN_PATH, out);
+        await fs.promises.writeFile(TOKEN_PATH, out);
     } catch (e) {
         warn("[GOOGLE] Falha ao salvar sessão:", e.message);
     }
@@ -166,7 +183,7 @@ function startOAuthFlow() {
                     accessToken = tokens.access_token;
                     accessTokenExpiry = Date.now() + tokens.expires_in * 1000;
                     userEmail = await fetchUserEmail(accessToken);
-                    persistToken();
+                    await persistToken();
                     settled = true;
                     clearTimeout(timeoutHandle);
                     log("[GOOGLE] Conectado:", userEmail || "(e-mail não obtido)");

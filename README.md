@@ -143,7 +143,7 @@ A desinstalação remove o programa e os atalhos, mas **não apaga suas notas**:
 
 ### Compilando você mesmo
 
-Pré-requisitos: [Node.js](https://nodejs.org/) (LTS) e npm.
+Pré-requisitos: [Node.js](https://nodejs.org/) 22.12 ou mais novo (LTS) e npm.
 
 ```bash
 npm install

@@ -72,33 +72,46 @@ function criar({ obterDados, salvar, obterJanelas }) {
         sincronizar();
     }
 
+    // A sessão salva é lida de forma assíncrona (safeStorage). Tudo que depende
+    // dela espera esta promise — senão a tela poderia mostrar "desconectado" no
+    // começo, ou uma leitura atrasada sobrescreveria um login recém-feito.
+    let sessaoCarregada = Promise.resolve();
+
     function iniciar() {
-        GoogleAuth.loadStoredToken();
-        sincronizarAutomatico("início do app");
+        sessaoCarregada = GoogleAuth.loadStoredToken();
+        sessaoCarregada.then(() => sincronizarAutomatico("início do app"));
         setInterval(sincronizarSeConectado, SYNC_INTERVAL_MS);
     }
 
     /* ──────────────────  Botões da tela de configurações  ─────────── */
 
-    ipcMain.handle("google-auth-status", () => ({
-        configured: GoogleAuth.isConfigured(),
-        connected: GoogleAuth.isConnected(),
-        email: GoogleAuth.getEmail(),
-        lastSyncAt: obterDados().googleSync.lastSyncAt
-    }));
+    ipcMain.handle("google-auth-status", async () => {
+        await sessaoCarregada;
+        return {
+            configured: GoogleAuth.isConfigured(),
+            connected: GoogleAuth.isConnected(),
+            email: GoogleAuth.getEmail(),
+            lastSyncAt: obterDados().googleSync.lastSyncAt
+        };
+    });
 
     ipcMain.handle("google-auth-start", async () => {
+        await sessaoCarregada;
         const result = await GoogleAuth.startOAuthFlow(); // rejeita a promise no invoke se falhar/cancelar
         sincronizar(); // primeira sincronização logo após conectar, sem esperar o usuário abrir/fechar o widget
         return { connected: true, email: result.email };
     });
 
     ipcMain.handle("google-disconnect", async () => {
+        await sessaoCarregada;
         await GoogleAuth.disconnect();
         return { connected: false };
     });
 
-    ipcMain.handle("google-sync-now", () => sincronizar());
+    ipcMain.handle("google-sync-now", async () => {
+        await sessaoCarregada;
+        return sincronizar();
+    });
 
     return { iniciar, sincronizar, sincronizarSeConectado, sincronizarAutomatico };
 }
