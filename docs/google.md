@@ -48,16 +48,41 @@ embutido participa — a autorização acontece no navegador do próprio usuári
 ### Escopos
 
 ```
-https://www.googleapis.com/auth/calendar
+https://www.googleapis.com/auth/calendar.events
 https://www.googleapis.com/auth/userinfo.email
 ```
+
+Só eventos: o app usa apenas `/calendars/primary/events` (listar, criar,
+alterar, excluir). Até a v1.3.0 o app pedia `auth/calendar`, que também permite
+apagar agendas inteiras e mudar com quem são compartilhadas — poder que um
+token vazado não deve ter.
+
+- **Sessões antigas** (conectadas com o escopo completo) continuam funcionando,
+  mas a tela de Configurações mostra um aviso e o botão **Reconectar**. Sessões
+  salvas antes desta mudança não registravam o escopo; elas contam como
+  "amplas" até a primeira renovação informar o escopo real.
+- **Reconectar revoga a sessão atual antes** de abrir o login novo. Revogar
+  depois poderia derrubar a nova junto (o Google pode tratar a revogação como
+  retirada da autorização inteira do app); não revogar deixaria o token antigo
+  válido no Google.
+- **No Google Cloud Console**, a tela de consentimento (Data access) deve listar
+  `calendar.events` no lugar de `calendar`.
+- O login exige um `refresh_token` novo; se o Google não devolver, a conexão é
+  recusada em vez de reaproveitar uma sessão antiga com outro escopo.
 
 ### Guarda dos tokens
 
 | Token | Onde fica | Vida |
 |---|---|---|
-| `refresh_token` | `userData/google-auth.enc`, cifrado com `safeStorage` do Electron (cofre de credenciais do Windows) | Longa |
+| `refresh_token` | `userData/google-auth.enc`, cifrado com `safeStorage` do Electron (cofre de credenciais do Windows), junto com o e-mail e os escopos concedidos | Longa |
 | `access_token` | **Só em memória**, nunca em disco | ~1h, renovado sob demanda |
+
+**O token nunca vai para o disco sem criptografia.** Se o sistema não oferecer
+criptografia, a sessão fica só na memória (a tela avisa que será preciso
+reconectar ao fechar o app). Um arquivo em texto puro deixado por versões
+antigas (começa com `{`; o cifrado começa com `v10`) é cifrado ao ser lido ou,
+sem criptografia disponível, apagado. A gravação é atômica (arquivo temporário
++ troca de nome). A revogação manda o token no corpo do pedido, não na URL.
 
 A renovação acontece quando faltam menos de 60 segundos para expirar. Se o
 Google responder **400 ou 401** na renovação, o token foi revogado (o usuário

@@ -15,7 +15,15 @@ try {
 }
 
 const TOKEN_PATH = path.join(PATHS.userData, "google-auth.enc");
-const SCOPES = "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/userinfo.email";
+
+// Escopo mínimo: o app só lê e grava EVENTOS da agenda principal
+// (/calendars/primary/events). O escopo "calendar" completo, usado antes,
+// permitia também apagar agendas inteiras e mudar com quem elas são
+// compartilhadas — poder que um token vazado não deve ter.
+const ESCOPO_EVENTOS = "https://www.googleapis.com/auth/calendar.events";
+const ESCOPO_AGENDA_COMPLETA = "https://www.googleapis.com/auth/calendar";
+const ESCOPO_EMAIL = "https://www.googleapis.com/auth/userinfo.email";
+const SCOPES = [ESCOPO_EVENTOS, ESCOPO_EMAIL].join(" ");
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const REVOKE_URL = "https://oauth2.googleapis.com/revoke";
@@ -26,6 +34,12 @@ let refreshToken = null;
 let accessToken = null;
 let accessTokenExpiry = 0;
 let userEmail = null;
+// Escopos concedidos ao refresh token atual (texto, separados por espaço).
+// Sessões salvas antes desta versão não têm o campo: foram obtidas com o
+// escopo completo, então null conta como "amplo" até a próxima renovação dizer.
+let escoposConcedidos = null;
+// true quando o sistema não oferece criptografia: a sessão vale só até fechar.
+let sessaoSoNaMemoria = false;
 
 function base64url(buf) {
     return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -43,6 +57,42 @@ function getEmail() {
     return userEmail;
 }
 
+/** O token atual pode mais do que o app precisa (escopo de agenda completo). */
+function temEscopoAmplo() {
+    if (!refreshToken) return false;
+    if (escoposConcedidos === null) return true;
+    return escoposConcedidos.split(" ").includes(ESCOPO_AGENDA_COMPLETA);
+}
+
+function getSessaoSoNaMemoria() {
+    return sessaoSoNaMemoria;
+}
+
+/* ═══════════════════════════  GUARDA DO TOKEN  ═══════════════════════════ */
+// Regra: o refresh token NUNCA vai para o disco sem criptografia do sistema
+// (safeStorage → DPAPI no Windows). Se a criptografia não estiver disponível,
+// a sessão fica só na memória e acaba quando o app fecha — reconectar é um
+// incômodo; um token legível no disco é acesso à agenda para quem copiar o
+// arquivo.
+//
+// Formatos do arquivo:
+//   "v10..."  cifrado pelo safeStorage (prefixo de versão do cofre do Chromium)
+//   "{..."    JSON puro, gravado por versões antigas quando não havia
+//             criptografia — é migrado (cifrado) ou apagado ao ser lido.
+
+const PRIMEIRO_BYTE_JSON = 0x7b; // "{"
+
+async function apagarArquivoDoToken() {
+    try { await fs.promises.rm(TOKEN_PATH, { force: true }); }
+    catch (e) { warn("[GOOGLE] Falha ao remover token salvo:", e.message); }
+}
+
+function aplicarSessao(parsed) {
+    refreshToken = typeof parsed.refreshToken === "string" && parsed.refreshToken ? parsed.refreshToken : null;
+    userEmail = typeof parsed.email === "string" ? parsed.email : null;
+    escoposConcedidos = typeof parsed.scope === "string" ? parsed.scope : null;
+}
+
 // safeStorage: API assíncrona (a síncrona ficou obsoleta no Electron 45 e sai
 // no 46). Lê o mesmo formato gravado pela síncrona, então sessões já salvas
 // continuam valendo.
@@ -52,24 +102,33 @@ async function loadStoredToken() {
         const raw = await fs.promises.readFile(TOKEN_PATH);
         const cifrado = await safeStorage.isAsyncEncryptionAvailable();
 
-        let decrypted;
-        let regravar = false;
-        if (cifrado) {
-            const r = await safeStorage.decryptStringAsync(raw);
-            decrypted = r.result;
-            regravar = r.shouldReEncrypt; // chave do sistema trocou: regrava com a nova
+        if (raw[0] === PRIMEIRO_BYTE_JSON) {
+            // Formato antigo, sem criptografia: aproveita a sessão, mas não
+            // deixa o arquivo legível no disco nem mais um instante.
+            aplicarSessao(JSON.parse(raw.toString("utf8")));
+            warn("[SECURITY] [GOOGLE] Sessão salva SEM criptografia encontrada — migrando.");
+            if (cifrado) {
+                await persistToken(); // sobrescreve com a versão cifrada
+            } else {
+                sessaoSoNaMemoria = true;
+                await apagarArquivoDoToken();
+                warn("[GOOGLE] Criptografia do sistema indisponível: arquivo apagado, sessão vale só até fechar o app.");
+            }
         } else {
-            decrypted = raw.toString("utf8");
+            if (!cifrado) {
+                warn("[GOOGLE] Criptografia do sistema indisponível: a sessão salva não pode ser lida agora.");
+                return;
+            }
+            const r = await safeStorage.decryptStringAsync(raw);
+            aplicarSessao(JSON.parse(r.result));
+            if (r.shouldReEncrypt && refreshToken) {
+                log("[GOOGLE] Chave de criptografia do sistema mudou — regravando a sessão.");
+                await persistToken();
+            }
         }
 
-        const parsed = JSON.parse(decrypted);
-        refreshToken = parsed.refreshToken || null;
-        userEmail = parsed.email || null;
         if (refreshToken) log("[GOOGLE] Sessão restaurada:", userEmail || "(sem e-mail salvo)");
-        if (regravar && refreshToken) {
-            log("[GOOGLE] Chave de criptografia do sistema mudou — regravando a sessão.");
-            await persistToken();
-        }
+        if (temEscopoAmplo()) warn("[GOOGLE] A sessão salva tem permissão de agenda completa; reconectar reduz para só eventos.");
     } catch (e) {
         warn("[GOOGLE] Falha ao carregar sessão salva:", e.message);
     }
@@ -77,15 +136,21 @@ async function loadStoredToken() {
 
 async function persistToken() {
     try {
-        const cifrado = await safeStorage.isAsyncEncryptionAvailable();
-        if (!cifrado) {
-            warn("[GOOGLE] Criptografia do SO indisponível -- token salvo sem criptografia adicional.");
+        if (!(await safeStorage.isAsyncEncryptionAvailable())) {
+            sessaoSoNaMemoria = true;
+            await apagarArquivoDoToken();
+            warn("[GOOGLE] Criptografia do sistema indisponível: sessão NÃO foi salva no disco e vale só até fechar o app.");
+            return;
         }
-        const payload = JSON.stringify({ refreshToken, email: userEmail });
-        const out = cifrado
-            ? await safeStorage.encryptStringAsync(payload)
-            : Buffer.from(payload, "utf8");
-        await fs.promises.writeFile(TOKEN_PATH, out);
+        sessaoSoNaMemoria = false;
+        const payload = JSON.stringify({ refreshToken, email: userEmail, scope: escoposConcedidos });
+        const cifrado = await safeStorage.encryptStringAsync(payload);
+
+        // Grava num temporário e troca de nome: uma queda no meio da gravação
+        // não deixa o arquivo pela metade (e a sessão perdida).
+        const tmp = `${TOKEN_PATH}.tmp`;
+        await fs.promises.writeFile(tmp, cifrado);
+        await fs.promises.rename(tmp, TOKEN_PATH);
     } catch (e) {
         warn("[GOOGLE] Falha ao salvar sessão:", e.message);
     }
@@ -96,7 +161,9 @@ function clearToken() {
     accessToken = null;
     accessTokenExpiry = 0;
     userEmail = null;
-    try { if (fs.existsSync(TOKEN_PATH)) fs.unlinkSync(TOKEN_PATH); } catch (e) { warn("[GOOGLE] Falha ao remover token salvo:", e.message); }
+    escoposConcedidos = null;
+    sessaoSoNaMemoria = false;
+    try { fs.rmSync(TOKEN_PATH, { force: true }); } catch (e) { warn("[GOOGLE] Falha ao remover token salvo:", e.message); }
 }
 
 function callbackPageHtml(error) {
@@ -175,11 +242,21 @@ function startOAuthFlow() {
                 try {
                     const tokens = await exchangeCode(code, codeVerifier, redirectUri);
                     const granted = (tokens.scope || "").split(" ");
-                    if (!granted.includes("https://www.googleapis.com/auth/calendar")) {
+                    // Aceita o escopo completo também: uma conta que já o tinha
+                    // concedido antes pode recebê-lo de volta. Fica registrado,
+                    // e a tela oferece reconectar.
+                    if (!granted.includes(ESCOPO_EVENTOS) && !granted.includes(ESCOPO_AGENDA_COMPLETA)) {
                         revokeQuietly(tokens.refresh_token || tokens.access_token);
                         throw new Error("A permissão da agenda não foi concedida. Conecte de novo e marque a opção do Google Agenda na tela do Google.");
                     }
-                    refreshToken = tokens.refresh_token || refreshToken;
+                    // Sem refresh token novo, a sessão ficaria presa ao antigo
+                    // (que pode ter outro escopo). Com prompt=consent ele sempre vem.
+                    if (!tokens.refresh_token) {
+                        revokeQuietly(tokens.access_token);
+                        throw new Error("O Google não devolveu um token de sessão. Tente conectar de novo.");
+                    }
+                    refreshToken = tokens.refresh_token;
+                    escoposConcedidos = granted.join(" ");
                     accessToken = tokens.access_token;
                     accessTokenExpiry = Date.now() + tokens.expires_in * 1000;
                     userEmail = await fetchUserEmail(accessToken);
@@ -244,6 +321,13 @@ async function refreshAccessToken() {
     const tokens = await res.json();
     accessToken = tokens.access_token;
     accessTokenExpiry = Date.now() + tokens.expires_in * 1000;
+
+    // A renovação informa os escopos do token: corrige o que estava salvo
+    // (sessões antigas não tinham esse dado).
+    if (typeof tokens.scope === "string" && tokens.scope && tokens.scope !== escoposConcedidos) {
+        escoposConcedidos = tokens.scope;
+        await persistToken();
+    }
     return accessToken;
 }
 
@@ -256,7 +340,13 @@ async function getValidAccessToken() {
 async function revokeQuietly(token) {
     if (!token) return;
     try {
-        await fetch(`${REVOKE_URL}?token=${encodeURIComponent(token)}`, { method: "POST" });
+        // Token no corpo, não na URL: URLs costumam parar em logs de proxy e
+        // de ferramentas de rede.
+        await fetch(REVOKE_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({ token })
+        });
     } catch (e) {
         warn("[GOOGLE] Falha ao revogar token no Google (ignorado):", e.message);
     }
@@ -271,5 +361,5 @@ async function disconnect() {
 
 module.exports = {
     isConfigured, isConnected, getEmail, startOAuthFlow, disconnect, getValidAccessToken,
-    loadStoredToken
+    loadStoredToken, temEscopoAmplo, getSessaoSoNaMemoria
 };

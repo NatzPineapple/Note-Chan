@@ -91,15 +91,30 @@ function criar({ obterDados, salvar, obterJanelas }) {
             configured: GoogleAuth.isConfigured(),
             connected: GoogleAuth.isConnected(),
             email: GoogleAuth.getEmail(),
-            lastSyncAt: obterDados().googleSync.lastSyncAt
+            lastSyncAt: obterDados().googleSync.lastSyncAt,
+            escopoAmplo: GoogleAuth.temEscopoAmplo(),
+            sessaoTemporaria: GoogleAuth.getSessaoSoNaMemoria()
         };
     });
 
     Ipc.atender("google-auth-start", ["settings"], async () => {
         await sessaoCarregada;
+        // Reconectar: a sessão antiga é revogada ANTES de pedir a nova. Revogar
+        // depois poderia derrubar a nova junto (o Google pode tratar a revogação
+        // como retirada da autorização inteira do app), e não revogar deixaria
+        // o token antigo — talvez com escopo amplo — válido no Google.
+        if (GoogleAuth.isConnected()) {
+            log("[GOOGLE] Reconectando: revogando a sessão atual antes de pedir uma nova.");
+            await GoogleAuth.disconnect();
+        }
         const result = await GoogleAuth.startOAuthFlow(); // rejeita a promise no invoke se falhar/cancelar
         sincronizar(); // primeira sincronização logo após conectar, sem esperar o usuário abrir/fechar o widget
-        return { connected: true, email: result.email };
+        return {
+            connected: true,
+            email: result.email,
+            escopoAmplo: GoogleAuth.temEscopoAmplo(),
+            sessaoTemporaria: GoogleAuth.getSessaoSoNaMemoria()
+        };
     });
 
     Ipc.atender("google-disconnect", ["settings"], async () => {
